@@ -214,7 +214,7 @@ function getScheduledEndTime(job: any): string {
 function getSolidAreaClass(area: AreaKey) {
   if (area === "camion") return "bg-red-600 text-white border-red-700";
   if (area === "movil") return "bg-amber-400 text-white border-amber-500";
-  if (area === "tacografo") return "bg-violet-500 text-white border-violet-600";
+  if (area === "tacografo") return "bg-orange-500 text-white border-orange-600";
   if (area === "turismo") return "bg-sky-500 text-white border-sky-600";
   return "bg-emerald-500 text-white border-emerald-600";
 }
@@ -300,18 +300,23 @@ export default function AgendaView({
   scheduledJobs,
   setScheduledJobs,
   quickTemplates,
+  AREA_META,
   onBack,
   appendLog,
-   cancelScheduledJob,
+  cancelScheduledJob,
 }: Props) {
   const [weekOffset, setWeekOffset] = useState(0);
   const [modalOpen, setModalOpen] = useState(false);
+  const [calendarMode, setCalendarMode] = useState<"week" | "day">("week");
+const [selectedDayDate, setSelectedDayDate] = useState<string>("");
   const [editingJobId, setEditingJobId] = useState<number | null>(null);
 
   const [selectedSlot, setSelectedSlot] = useState<{
     date: string;
     startTime: string;
   } | null>(null);
+
+const [selectedArea, setSelectedArea] = useState<AreaKey>("camion");
 
   const [draft, setDraft] = useState({
     templateKey: quickTemplates[0]?.key ?? "",
@@ -322,7 +327,21 @@ export default function AgendaView({
     estimatedMinutes: 45,
   });
 
+  const templatesForSelectedArea = quickTemplates.filter(
+  (template) => template.area === selectedArea
+);
+
   const days = getWeekDays(weekOffset);
+  const visibleDays =
+  calendarMode === "day"
+    ? days.filter((day) => day.date === (selectedDayDate || getTodayKey()))
+    : days;
+  const finalVisibleDays =
+  visibleDays.length > 0
+    ? visibleDays
+    : days.length > 0
+    ? [days[0]]
+    : [];
   const todayKey = formatLocalDate(new Date());
   const cancelledJobs: ScheduledJob[] = scheduledJobs.filter(
   (job: ScheduledJob) => job.status === "cancelado"
@@ -337,7 +356,14 @@ function openNewAppointment(date: string, startTime: string) {
     return;
   }
 
-  const firstTemplateKey = quickTemplates[0]?.key ?? "";
+  const firstTemplate = quickTemplates.find(
+  (template) => template.area === "camion"
+) ?? quickTemplates[0];
+
+const firstTemplateKey = firstTemplate?.key ?? "";
+const firstArea = firstTemplate?.area ?? "camion";
+
+setSelectedArea(firstArea);
 
   setEditingJobId(null);
 
@@ -372,9 +398,13 @@ function openNewAppointmentFromHeader() {
     date: firstAvailable.date,
     startTime: firstAvailable.startTime,
   });
+const firstTemplate = quickTemplates.find(
+  (template) => template.area === "camion"
+) ?? quickTemplates[0];
 
+setSelectedArea(firstTemplate?.area ?? "camion");
   setDraft({
-    templateKey: quickTemplates[0]?.key ?? "",
+    templateKey: firstTemplate?.key ?? "",
     plate: "",
     customerName: "",
     customerPhone: "",
@@ -385,7 +415,8 @@ function openNewAppointmentFromHeader() {
   setModalOpen(true);
 }
 
-  function openEditAppointment(job: ScheduledJob) {
+function openEditAppointment(job: ScheduledJob) {
+  setSelectedArea(job.area);
   setEditingJobId(job.id);
 
   setSelectedSlot({
@@ -415,7 +446,10 @@ if (isPastDateTime(selectedSlot.date, selectedSlot.startTime)) {
   return;
 }
 
-  const template = quickTemplates.find((t) => t.key === draft.templateKey);
+  const finalTemplateKey =
+  draft.templateKey || templatesForSelectedArea[0]?.key || "";
+
+const template = quickTemplates.find((t) => t.key === finalTemplateKey);
   if (!template) return;
 
   const nextData = {
@@ -502,13 +536,44 @@ if (isPastDateTime(selectedSlot.date, selectedSlot.startTime)) {
               ← Semana anterior
             </button>
 
-            <button
-              type="button"
-              onClick={() => setWeekOffset(0)}
+           <button
+  type="button"
+  onClick={() => {
+    setWeekOffset(0);
+    setSelectedDayDate(getTodayKey());
+  }}
               className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium"
             >
               Hoy
             </button>
+
+            <button
+  type="button"
+  onClick={() => {
+    if (calendarMode === "week") {
+      setSelectedDayDate(getTodayKey());
+      setCalendarMode("day");
+    } else {
+      setCalendarMode("week");
+    }
+  }}
+  className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium"
+>
+  {calendarMode === "week" ? "Vista día" : "Vista semana"}
+</button>
+{calendarMode === "day" && (
+  <select
+    value={selectedDayDate || getTodayKey()}
+    onChange={(e) => setSelectedDayDate(e.target.value)}
+    className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium"
+  >
+    {days.map((day) => (
+      <option key={day.date} value={day.date}>
+        {day.label}
+      </option>
+    ))}
+  </select>
+)}
 
            <button
   type="button"
@@ -529,10 +594,16 @@ if (isPastDateTime(selectedSlot.date, selectedSlot.startTime)) {
         </div>
 
 <div className="w-full overflow-x-auto rounded-3xl border border-slate-200 bg-white shadow-sm">
-          <div className="grid min-w-[1250px] grid-cols-[80px_repeat(6,1fr)] border-b border-slate-200">
+<div
+  className={`grid border-b border-slate-200 ${
+    calendarMode === "day"
+      ? "min-w-[900px] grid-cols-[80px_1fr]"
+      : "min-w-[1250px] grid-cols-[80px_repeat(6,1fr)]"
+  }`}
+>
             <div className="p-3 text-xs font-medium text-slate-500">Hora</div>
 
-            {days.map((day) => (
+            {finalVisibleDays.map((day) => (
               <div
                 key={day.date}
                 className="border-l border-slate-200 p-3 text-sm font-semibold capitalize"
@@ -542,7 +613,13 @@ if (isPastDateTime(selectedSlot.date, selectedSlot.startTime)) {
             ))}
           </div>
 
-          <div className="grid min-w-[1250px] grid-cols-[80px_repeat(6,1fr)]">
+<div
+  className={`grid ${
+    calendarMode === "day"
+      ? "min-w-[900px] grid-cols-[80px_1fr]"
+      : "min-w-[1250px] grid-cols-[80px_repeat(6,1fr)]"
+  }`}
+>
             <div>
               {getTimeSlotsForDay(0).map((slot) => (
                 <div
@@ -555,7 +632,7 @@ if (isPastDateTime(selectedSlot.date, selectedSlot.startTime)) {
               ))}
             </div>
 
-            {days.map((day) => {
+            {finalVisibleDays.map((day) => {
               const slots = getTimeSlotsForDay(day.index);
               const dayStart = getDayStart(day.index);
               const dayHeight = slots.length * SLOT_HEIGHT;
@@ -834,26 +911,70 @@ const dayJobs = scheduledJobs
               </div>
 
               <div className="space-y-4">
-                <select
-  value={draft.templateKey || quickTemplates[0]?.key || ""}
-  onChange={(e) =>
-    setDraft((prev) => ({
-      ...prev,
-      templateKey: e.target.value,
-    }))
-  }
-  className="w-full rounded-2xl border border-slate-200 px-3 py-3"
->
-  {quickTemplates.length === 0 ? (
-    <option value="">No hay entradas rápidas</option>
-  ) : (
-    quickTemplates.map((template) => (
-      <option key={template.key} value={template.key}>
-        {template.label}
-      </option>
-    ))
+<div className="space-y-3">
+  <div className="grid grid-cols-5 gap-2">
+  {(["camion", "movil", "tacografo", "turismo", "mecanica"] as AreaKey[]).map(
+    (area) => {
+      const areaTemplates = quickTemplates.filter(
+        (template) => template.area === area
+      );
+
+      if (areaTemplates.length === 0) return null;
+
+      const meta = AREA_META[area];
+      const Icon = meta.icon;
+      const active = selectedArea === area;
+
+      return (
+        <button
+          key={area}
+          type="button"
+          onClick={() => {
+            const firstTemplate = areaTemplates[0];
+
+            setSelectedArea(area);
+
+            setDraft((prev) => ({
+              ...prev,
+              templateKey: firstTemplate?.key ?? "",
+            }));
+          }}
+          className={`rounded-2xl border px-2 py-2 text-xs font-semibold transition ${meta.color} ${
+            active
+              ? "ring-2 ring-slate-900 ring-offset-2"
+              : "opacity-80 hover:opacity-100"
+          }`}
+          title={meta.label}
+        >
+          <Icon className="mx-auto mb-1 h-4 w-4" />
+          <span className="block truncate">{meta.label}</span>
+        </button>
+      );
+    }
   )}
-</select>
+</div>
+
+  <select
+    value={draft.templateKey || templatesForSelectedArea[0]?.key || ""}
+    onChange={(e) =>
+      setDraft((prev) => ({
+        ...prev,
+        templateKey: e.target.value,
+      }))
+    }
+    className="w-full rounded-2xl border border-slate-200 px-3 py-3"
+  >
+    {templatesForSelectedArea.length === 0 ? (
+      <option value="">No hay entradas en este bloque</option>
+    ) : (
+      templatesForSelectedArea.map((template) => (
+        <option key={template.key} value={template.key}>
+          {template.label}
+        </option>
+      ))
+    )}
+  </select>
+</div>
 
                 <input
                   value={draft.plate}
