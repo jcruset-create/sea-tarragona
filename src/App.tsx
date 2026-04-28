@@ -1487,15 +1487,10 @@ export default function SeaTarragonaV1() {
   const [newRule, setNewRule] = useState("");
   const [techs, setTechs] = useState<Tech[]>(INITIAL_TECHS);
   const [jobs, setJobs] = useState<Job[]>([]);
-const [scheduledJobs, setScheduledJobs] = useState<ScheduledJob[]>(() => {
-  try {
-    if (typeof window === "undefined") return [];
-    const saved = window.localStorage.getItem("scheduledJobs");
-    return saved ? JSON.parse(saved) : [];
-  } catch {
-    return [];
-  }
-});  const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
+  const [scheduledJobs, setScheduledJobs] = useState<ScheduledJob[]>([]);
+  const [scheduledJobsLoaded, setScheduledJobsLoaded] = useState(false);
+
+  const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
   const [resetPassword, setResetPassword] = useState("");
   const [resetError, setResetError] = useState("");
   const [nextJobId, setNextJobId] = useState(() => {
@@ -1553,8 +1548,8 @@ const [editingQuickTemplateKey, setEditingQuickTemplateKey] = useState<string | 
 const [log, setLog] = useState<LogItem[]>([]);
 const [externalAIAnswer, setExternalAIAnswer] = useState("");
 const [externalAILoading, setExternalAILoading] = useState(false);
-  const [newTechName, setNewTechName] = useState("");
-  const [, setTick] = useState(0);
+const [newTechName, setNewTechName] = useState("");
+const [, setTick] = useState(0);
 const [view, setView] = useState<
   "operativo" | "agenda" | "ajustes" | "pantalla" | "informes"
 >("operativo");
@@ -1759,6 +1754,24 @@ useEffect(() => {
 }, []);
 
 useEffect(() => {
+  async function loadScheduledJobs() {
+    try {
+      const response = await fetchWithTimeout(`${API_BASE}/api/scheduled-jobs`);
+      const data = await response.json();
+
+      setScheduledJobs(Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.error("Error cargando agenda:", error);
+      setScheduledJobs([]);
+    } finally {
+      setScheduledJobsLoaded(true);
+    }
+  }
+
+  loadScheduledJobs();
+}, []);
+
+useEffect(() => {
   if (initialAutoAssignDone) return;
   if (!jobs.length || !techs.length) return;
 
@@ -1955,15 +1968,18 @@ useEffect(() => {
 }, [techStats, techLoadStats]);
 
 useEffect(() => {
-  try {
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(
-        "scheduledJobs",
-        JSON.stringify(scheduledJobs)
-      );
-    }
-  } catch {}
-}, [scheduledJobs]);
+  if (!scheduledJobsLoaded) return;
+
+  fetchWithTimeout(`${API_BASE}/api/scheduled-jobs`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(scheduledJobs),
+  }).catch((error) => {
+    console.error("Error guardando agenda:", error);
+  });
+}, [scheduledJobs, scheduledJobsLoaded]);
 
   const techHoursReport = useMemo<TechHoursSummary[]>(() => {
     const now = new Date();
@@ -2276,15 +2292,32 @@ const recommendedTechByJobId = useMemo(() => {
 }, [runningJobs, techs, quickTemplates, techOperationStats]);
 
 const dueScheduledJobs = useMemo(() => {
-  const now = new Date();
+  const nowMsValue = Date.now();
+  const oneHourFromNow = nowMsValue + 60 * 60 * 1000;
 
-  return scheduledJobs.filter((job) => {
-    if (job.status !== "programado") return false;
+  const now = new Date(nowMsValue);
 
-    const start = new Date(`${job.date}T${job.startTime}`);
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(
+    2,
+    "0"
+  )}-${String(now.getDate()).padStart(2, "0")}`;
 
-    return start <= now;
-  });
+  return scheduledJobs
+    .filter((job) => job.status === "programado")
+    .filter((job) => job.date === today)
+    .filter((job) => {
+      const startMs = new Date(`${job.date}T${job.startTime}`).getTime();
+
+      if (Number.isNaN(startMs)) return false;
+
+      return startMs <= oneHourFromNow;
+    })
+    .sort((a, b) => {
+      const aMs = new Date(`${a.date}T${a.startTime}`).getTime();
+      const bMs = new Date(`${b.date}T${b.startTime}`).getTime();
+
+      return aMs - bMs;
+    });
 }, [scheduledJobs]);
 
 function getRecommendedTechForJob(
@@ -3617,6 +3650,7 @@ if (view === "pantalla") {
     <WorkshopWallScreen
       jobs={jobs}
       techs={techs}
+      scheduledJobs={scheduledJobs}
       onBack={() => setView("operativo")}
     />
   );
@@ -3982,7 +4016,12 @@ return (
         >
           <div className="font-semibold text-amber-900">
             {job.plate} · {job.date} · {job.startTime}
-          </div>
+   <div className="mt-1 text-xs font-medium text-amber-700">
+  {new Date(`${job.date}T${job.startTime}`).getTime() <= Date.now()
+  ? "Pendiente de confirmar llegada"
+  : "Entra en operativo porque falta menos de 1 hora"}
+</div>      </div>
+          
 
           <div className="mt-1 text-sm text-amber-700">
             {job.customerName || "Cliente sin nombre"}

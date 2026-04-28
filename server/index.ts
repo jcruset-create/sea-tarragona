@@ -685,6 +685,49 @@ app.delete("/api/quick-templates/:key", (req, res) => {
   }
 });
 
+const scheduledJobsFile = path.join(
+  process.cwd(),
+  "server",
+  "scheduled-jobs.json"
+);
+
+function readScheduledJobs() {
+  try {
+    if (!fs.existsSync(scheduledJobsFile)) {
+      fs.writeFileSync(scheduledJobsFile, "[]", "utf-8");
+      return [];
+    }
+
+    const raw = fs.readFileSync(scheduledJobsFile, "utf-8");
+    return JSON.parse(raw || "[]");
+  } catch (error) {
+    console.error("Error leyendo scheduled-jobs:", error);
+    return [];
+  }
+}
+
+function writeScheduledJobs(items: any[]) {
+  try {
+    fs.writeFileSync(
+      scheduledJobsFile,
+      JSON.stringify(items, null, 2),
+      "utf-8"
+    );
+  } catch (error) {
+    console.error("Error guardando scheduled-jobs:", error);
+  }
+}
+
+app.get("/api/scheduled-jobs", (_req, res) => {
+  res.json(readScheduledJobs());
+});
+
+app.put("/api/scheduled-jobs", (req, res) => {
+  const items = Array.isArray(req.body) ? req.body : [];
+  writeScheduledJobs(items);
+  res.json(items);
+});
+
 /* =========================================================
    404 / ERROR
 ========================================================= */
