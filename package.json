@@ -9,7 +9,8 @@
     "preview": "vite preview --host",
     "serve:prod": "vite preview --host --port 4173",
     "backup": "node scripts/backup.cjs",
-    "server": "ts-node server/index.ts"
+    "server": "tsx server/index.ts",
+    "start": "tsx server/index.ts"
   },
   "dependencies": {
     "better-sqlite3": "^12.8.0",
