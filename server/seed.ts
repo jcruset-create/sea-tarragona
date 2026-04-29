@@ -97,55 +97,60 @@ async function seed() {
     );
   }
 
-  const quickTemplates = [
-    {
-      key: "alineacion_camion",
-      label: "Alineación Camión",
-      area: "camion",
-      mode: "single",
-      allowedTechs: ["Anthoni", "Alejandro", "José"],
-      priorityOrder: ["Anthoni", "Alejandro", "José"],
-    },
-    {
-      key: "pinchazo_camion",
-      label: "Pinchazo camión",
-      area: "camion",
-      mode: "single",
-      allowedTechs: ["José", "Iván", "Alejandro", "Jesús", "Anthoni", "David"],
-      priorityOrder: ["José", "Iván", "Alejandro", "Jesús", "Anthoni", "David"],
-    },
-    {
-      key: "cambio_4_neumaticos_camion",
-      label: "Cambio de 4 neumáticos de camión",
-      area: "camion",
-      mode: "team",
-      allowedTechs: ["José", "Iván", "Alejandro", "Jesús", "Anthoni", "David"],
-      priorityOrder: ["José", "Iván", "Alejandro", "Jesús", "Anthoni", "David"],
-    },
-  ];
+ const quickTemplates = [
+  {
+    key: "alineacion_camion",
+    label: "Alineación Camión",
+    area: "camion",
+    mode: "single",
+    allowedTechs: ["Anthoni", "Alejandro", "José"],
+    priorityOrder: ["Anthoni", "Alejandro", "José"],
+    standardMinutes: 45,
+  },
+  {
+    key: "pinchazo_camion",
+    label: "Pinchazo camión",
+    area: "camion",
+    mode: "single",
+    allowedTechs: ["José", "Iván", "Alejandro", "Jesús", "Anthoni", "David"],
+    priorityOrder: ["José", "Iván", "Alejandro", "Jesús", "Anthoni", "David"],
+    standardMinutes: 25,
+  },
+  {
+    key: "cambio_4_neumaticos_camion",
+    label: "Cambio de 4 neumáticos de camión",
+    area: "camion",
+    mode: "team",
+    allowedTechs: ["José", "Iván", "Alejandro", "Jesús", "Anthoni", "David"],
+    priorityOrder: ["José", "Iván", "Alejandro", "Jesús", "Anthoni", "David"],
+    standardMinutes: 60,
+  },
+];
 
   for (const item of quickTemplates) {
     await db.query(
-      `
-        INSERT INTO quick_templates
-        (key, label, area, mode, "allowedTechs", "priorityOrder")
-        VALUES ($1, $2, $3, $4, $5, $6)
-        ON CONFLICT (key) DO UPDATE SET
-          label = EXCLUDED.label,
-          area = EXCLUDED.area,
-          mode = EXCLUDED.mode,
-          "allowedTechs" = EXCLUDED."allowedTechs",
-          "priorityOrder" = EXCLUDED."priorityOrder"
-      `,
-      [
-        item.key,
-        item.label,
-        item.area,
-        item.mode,
-        JSON.stringify(item.allowedTechs),
-        JSON.stringify(item.priorityOrder),
-      ]
-    );
+  `
+    INSERT INTO quick_templates
+    (key, label, area, mode, "allowedTechs", "priorityOrder", "standardMinutes")
+    VALUES ($1, $2, $3, $4, $5, $6, $7)
+    ON CONFLICT (key) DO UPDATE SET
+      label = EXCLUDED.label,
+      area = EXCLUDED.area,
+      mode = EXCLUDED.mode,
+      "allowedTechs" = EXCLUDED."allowedTechs",
+      "priorityOrder" = EXCLUDED."priorityOrder",
+      "standardMinutes" = EXCLUDED."standardMinutes"
+  `,
+  [
+    item.key,
+    item.label,
+    item.area,
+    item.mode,
+    JSON.stringify(item.allowedTechs),
+    JSON.stringify(item.priorityOrder),
+    item.standardMinutes ?? null,
+  ]
+);
   }
 
   console.log("Seed completado correctamente");
