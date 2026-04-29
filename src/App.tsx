@@ -283,7 +283,7 @@ AreaKey,
   },
 };
 
-const API_BASE = "http://localhost:4000";
+const API_BASE = "";
 
 async function fetchWithTimeout(
   url: string,
