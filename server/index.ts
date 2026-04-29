@@ -262,24 +262,22 @@ Si no hay técnico válido, responsable debe ser null.
    TECHS
 ========================================================= */
 
-app.get("/api/techs", (_req, res) => {
+app.get("/api/techs", async (_req, res) => {
   try {
-    const rows = db
-      .prepare(`
-        SELECT name, status, blocked, currentJobId, competencies, priorities, avatar
-        FROM techs
-        ORDER BY id ASC
-      `)
-      .all() as any[];
+    const result = await db.query(`
+      SELECT name, status, blocked, "currentJobId", competencies, priorities, avatar
+      FROM techs
+      ORDER BY id ASC
+    `);
 
-    res.json(rows.map(normalizeTechRow));
+    res.json(result.rows.map(normalizeTechRow));
   } catch (error) {
     console.error("GET /api/techs error:", error);
     res.status(500).json({ error: "Error obteniendo técnicos" });
   }
 });
 
-app.put("/api/techs/:name", (req, res) => {
+app.put("/api/techs/:name", async (req, res) => {
   try {
     const name = String(req.params.name);
     const { status, blocked, currentJobId, competencies, priorities, avatar } =
@@ -290,7 +288,7 @@ const existsResult = await db.query(
   [name]
 );
 
-const exists = existsResult.rowCount > 0;
+const exists = (existsResult.rowCount ?? 0) > 0;
     if (!exists) {
       return res.status(404).json({ error: "Técnico no encontrado" });
     }
