@@ -283,7 +283,7 @@ AreaKey,
   },
 };
 
-const API_BASE = "";
+const API_BASE = import.meta.env.PROD ? "" : "http://localhost:4000";
 
 async function fetchWithTimeout(
   url: string,
