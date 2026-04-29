@@ -66,6 +66,7 @@ function normalizeQuickTemplateRow(t: any) {
     ...t,
     allowedTechs: safeJsonParse(t.allowedTechs, [] as string[]),
     priorityOrder: safeJsonParse(t.priorityOrder, [] as string[]),
+    standardMinutes: t.standardMinutes ?? null,
   };
 }
 
@@ -581,77 +582,87 @@ app.get("/api/rules", async (_req, res) => {
 app.get("/api/quick-templates", async (_req, res) => {
   try {
     const defaults = [
-      {
-        key: "alineacion_camion",
-        label: "Alineación Camión",
-        area: "camion",
-        mode: "single",
-        allowedTechs: JSON.stringify(["Anthoni", "Alejandro", "José"]),
-        priorityOrder: JSON.stringify(["Anthoni", "Alejandro", "José"]),
-      },
-      {
-        key: "pinchazo_camion",
-        label: "Pinchazo camión",
-        area: "camion",
-        mode: "single",
-        allowedTechs: JSON.stringify([
-          "José",
-          "Iván",
-          "Alejandro",
-          "Jesús",
-          "Anthoni",
-          "David",
-        ]),
-        priorityOrder: JSON.stringify([
-          "José",
-          "Iván",
-          "Alejandro",
-          "Jesús",
-          "Anthoni",
-          "David",
-        ]),
-      },
-      {
-        key: "cambio_4_neumaticos_camion",
-        label: "Cambio de 4 neumáticos de camión",
-        area: "camion",
-        mode: "team",
-        allowedTechs: JSON.stringify([
-          "José",
-          "Iván",
-          "Alejandro",
-          "Jesús",
-          "Anthoni",
-          "David",
-        ]),
-        priorityOrder: JSON.stringify([
-          "José",
-          "Iván",
-          "Alejandro",
-          "Jesús",
-          "Anthoni",
-          "David",
-        ]),
-      },
-    ];
+  {
+    key: "alineacion_camion",
+    label: "Alineación Camión",
+    area: "camion",
+    mode: "single",
+    allowedTechs: JSON.stringify(["Anthoni", "Alejandro", "José"]),
+    priorityOrder: JSON.stringify(["Anthoni", "Alejandro", "José"]),
+    standardMinutes: 45,
+  },
+  {
+    key: "pinchazo_camion",
+    label: "Pinchazo camión",
+    area: "camion",
+    mode: "single",
+    allowedTechs: JSON.stringify([
+      "José",
+      "Iván",
+      "Alejandro",
+      "Jesús",
+      "Anthoni",
+      "David",
+    ]),
+    priorityOrder: JSON.stringify([
+      "José",
+      "Iván",
+      "Alejandro",
+      "Jesús",
+      "Anthoni",
+      "David",
+    ]),
+    standardMinutes: 25,
+  },
+  {
+    key: "cambio_4_neumaticos_camion",
+    label: "Cambio de 4 neumáticos de camión",
+    area: "camion",
+    mode: "team",
+    allowedTechs: JSON.stringify([
+      "José",
+      "Iván",
+      "Alejandro",
+      "Jesús",
+      "Anthoni",
+      "David",
+    ]),
+    priorityOrder: JSON.stringify([
+      "José",
+      "Iván",
+      "Alejandro",
+      "Jesús",
+      "Anthoni",
+      "David",
+    ]),
+    standardMinutes: 60,
+  },
+];
 
     for (const item of defaults) {
       await db.query(
-        `
-          INSERT INTO quick_templates
-          (key, label, area, mode, "allowedTechs", "priorityOrder")
-          VALUES ($1, $2, $3, $4, $5, $6)
-          ON CONFLICT (key) DO NOTHING
-        `,
-        [
-          item.key,
-          item.label,
-          item.area,
-          item.mode,
-          item.allowedTechs,
-          item.priorityOrder,
-        ]
-      );
+  `
+    INSERT INTO quick_templates
+    (key, label, area, mode, "allowedTechs", "priorityOrder", "standardMinutes")
+    VALUES ($1, $2, $3, $4, $5, $6, $7)
+    ON CONFLICT (key) DO UPDATE SET
+      label = EXCLUDED.label,
+      area = EXCLUDED.area,
+      mode = EXCLUDED.mode,
+      "allowedTechs" = EXCLUDED."allowedTechs",
+      "priorityOrder" = EXCLUDED."priorityOrder",
+      "standardMinutes" = EXCLUDED."standardMinutes"
+  `,
+  [
+    item.key,
+    item.label,
+    item.area,
+    item.mode,
+    item.allowedTechs,
+    item.priorityOrder,
+    item.standardMinutes ?? null,
+  ]
+);
     }
 
     const result = await db.query(`
@@ -671,21 +682,22 @@ app.post("/api/quick-templates", async (req, res) => {
     const t = req.body ?? {};
 
     const result = await db.query(
-      `
-        INSERT INTO quick_templates
-        (key, label, area, mode, "allowedTechs", "priorityOrder")
-        VALUES ($1, $2, $3, $4, $5, $6)
-        RETURNING *
-      `,
-      [
-        t.key,
-        t.label,
-        t.area,
-        t.mode,
-        JSON.stringify(Array.isArray(t.allowedTechs) ? t.allowedTechs : []),
-        JSON.stringify(Array.isArray(t.priorityOrder) ? t.priorityOrder : []),
-      ]
-    );
+  `
+    INSERT INTO quick_templates
+    (key, label, area, mode, "allowedTechs", "priorityOrder", "standardMinutes")
+    VALUES ($1, $2, $3, $4, $5, $6, $7)
+    RETURNING *
+  `,
+  [
+    t.key,
+    t.label,
+    t.area,
+    t.mode,
+    JSON.stringify(Array.isArray(t.allowedTechs) ? t.allowedTechs : []),
+    JSON.stringify(Array.isArray(t.priorityOrder) ? t.priorityOrder : []),
+    t.standardMinutes ?? null,
+  ]
+);
 
     res.json(normalizeQuickTemplateRow(result.rows[0]));
   } catch (error) {
@@ -697,7 +709,8 @@ app.post("/api/quick-templates", async (req, res) => {
 app.put("/api/quick-templates/:key", async (req, res) => {
   try {
     const key = String(req.params.key);
-    const { label, area, mode, allowedTechs, priorityOrder } = req.body ?? {};
+    const { label, area, mode, allowedTechs, priorityOrder, standardMinutes } =
+      req.body ?? {};
 
     const result = await db.query(
       `
@@ -707,8 +720,9 @@ app.put("/api/quick-templates/:key", async (req, res) => {
           area = $2,
           mode = $3,
           "allowedTechs" = $4,
-          "priorityOrder" = $5
-        WHERE key = $6
+          "priorityOrder" = $5,
+          "standardMinutes" = $6
+        WHERE key = $7
         RETURNING *
       `,
       [
@@ -717,6 +731,7 @@ app.put("/api/quick-templates/:key", async (req, res) => {
         mode,
         JSON.stringify(Array.isArray(allowedTechs) ? allowedTechs : []),
         JSON.stringify(Array.isArray(priorityOrder) ? priorityOrder : []),
+        standardMinutes ?? null,
         key,
       ]
     );
