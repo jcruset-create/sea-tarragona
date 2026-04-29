@@ -9,12 +9,10 @@ import { fileURLToPath } from "url";
 import db from "./db.ts";
 import OpenAI from "openai";
 
+
 const app = express();
 const PORT = process.env.PORT || 4000;
 
-app.listen(PORT, () => {
-  console.log(`Servidor backend en puerto ${PORT}`);
-});
 const RESET_PASSWORD = "sea123";
 console.log("KEY:", process.env.OPENAI_API_KEY ? "OK" : "NO CARGADA");
 const openai = new OpenAI({
@@ -123,9 +121,6 @@ const upload = multer({ storage });
    BASIC
 ========================================================= */
 
-app.get("/", (_req, res) => {
-  res.send("Servidor SEA Tarragona funcionando");
-});
 
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true });
@@ -733,6 +728,16 @@ app.put("/api/scheduled-jobs", (req, res) => {
 });
 
 /* =========================================================
+   FRONTEND REACT / VITE
+========================================================= */
+
+app.use(express.static(path.join(__dirname, "../dist")));
+
+app.get(/.*/, (_req, res) => {
+  res.sendFile(path.join(__dirname, "../dist/index.html"));
+});
+
+/* =========================================================
    404 / ERROR
 ========================================================= */
 
@@ -755,7 +760,6 @@ app.use(
 /* =========================================================
    START SERVER
 ========================================================= */
-
 app.listen(PORT, () => {
-  console.log(`Servidor backend en http://localhost:${PORT}`);
+  console.log(`Servidor backend en puerto ${PORT}`);
 });
