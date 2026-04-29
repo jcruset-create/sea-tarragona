@@ -6,7 +6,7 @@ import path from "path";
 import fs from "fs";
 import multer from "multer";
 import { fileURLToPath } from "url";
-import db from "./db.ts";
+import db, { initDb } from "./db.ts";
 import OpenAI from "openai";
 
 
@@ -150,7 +150,7 @@ app.get("/api/ai-test", async (req, res) => {
    RESET
 ========================================================= */
 
-app.post("/api/reset", (req, res) => {
+app.post("/api/reset", async (req, res) => {
   try {
     const { password } = req.body ?? {};
 
@@ -158,24 +158,24 @@ app.post("/api/reset", (req, res) => {
       return res.status(401).json({ error: "Contraseña incorrecta" });
     }
 
-    db.prepare(`DELETE FROM jobs`).run();
-    db.prepare(`DELETE FROM logs`).run();
+   await db.query(`DELETE FROM jobs`);
+await db.query(`DELETE FROM logs`);
 
-    db.prepare(`
-      UPDATE techs
-      SET
-        status = CASE WHEN name = 'Ramón' THEN 'supervisor' ELSE 'disponible' END,
-        blocked = 0,
-        currentJobId = NULL
-    `).run();
+await db.query(`
+  UPDATE techs
+  SET
+    status = CASE WHEN name = 'Ramón' THEN 'supervisor' ELSE 'disponible' END,
+    blocked = false,
+    "currentJobId" = NULL
+`);
 
-    const techs = db
-      .prepare(`
-        SELECT name, status, blocked, currentJobId, competencies, priorities, avatar
-        FROM techs
-        ORDER BY id ASC
-      `)
-      .all() as any[];
+const techsResult = await db.query(`
+  SELECT name, status, blocked, "currentJobId", competencies, priorities, avatar
+  FROM techs
+  ORDER BY id ASC
+`);
+
+const techs = techsResult.rows;
 
     res.json({
       ok: true,
@@ -285,33 +285,49 @@ app.put("/api/techs/:name", (req, res) => {
     const { status, blocked, currentJobId, competencies, priorities, avatar } =
       req.body ?? {};
 
-    const exists = db.prepare(`SELECT 1 FROM techs WHERE name = ?`).get(name);
+const existsResult = await db.query(
+  `SELECT 1 FROM techs WHERE name = $1`,
+  [name]
+);
 
+const exists = existsResult.rowCount > 0;
     if (!exists) {
       return res.status(404).json({ error: "Técnico no encontrado" });
     }
 
-    db.prepare(`
-      UPDATE techs
-      SET status = ?, blocked = ?, currentJobId = ?, competencies = ?, priorities = ?, avatar = ?
-      WHERE name = ?
-    `).run(
-      status ?? "disponible",
-      blocked ? 1 : 0,
-      currentJobId ?? null,
-      JSON.stringify(competencies ?? {}),
-      JSON.stringify(priorities ?? {}),
-      avatar ?? null,
-      name
-    );
+await db.query(
+  `
+    UPDATE techs
+    SET
+      status = $1,
+      blocked = $2,
+      "currentJobId" = $3,
+      competencies = $4,
+      priorities = $5,
+      avatar = $6
+    WHERE name = $7
+  `,
+  [
+    status ?? "disponible",
+    !!blocked,
+    currentJobId ?? null,
+    JSON.stringify(competencies ?? {}),
+    JSON.stringify(priorities ?? {}),
+    avatar ?? null,
+    name,
+  ]
+);
 
-    const tech = db
-      .prepare(`
-        SELECT name, status, blocked, currentJobId, competencies, priorities, avatar
-        FROM techs
-        WHERE name = ?
-      `)
-      .get(name) as any;
+const techResult = await db.query(
+  `
+    SELECT name, status, blocked, "currentJobId", competencies, priorities, avatar
+    FROM techs
+    WHERE name = $1
+  `,
+  [name]
+);
+
+const tech = techResult.rows[0];
 
     res.json(normalizeTechRow(tech));
   } catch (error) {
@@ -320,17 +336,20 @@ app.put("/api/techs/:name", (req, res) => {
   }
 });
 
-app.post("/api/techs/:name/avatar", upload.single("avatar"), (req, res) => {
-  try {
+app.post("/api/techs/:name/avatar", upload.single("avatar"), async (req, res) => {
+try {
     const name = String(req.params.name);
 
     if (!req.file) {
       return res.status(400).json({ error: "No se recibió archivo" });
     }
 
-    const exists = db
-      .prepare(`SELECT avatar FROM techs WHERE name = ?`)
-      .get(name) as { avatar?: string | null } | undefined;
+    const existsResult = await db.query(
+  `SELECT avatar FROM techs WHERE name = $1`,
+  [name]
+);
+
+const exists = existsResult.rows[0];
 
     if (!exists) {
       return res.status(404).json({ error: "Técnico no encontrado" });
@@ -338,19 +357,25 @@ app.post("/api/techs/:name/avatar", upload.single("avatar"), (req, res) => {
 
     const avatarUrl = `/uploads/${req.file.filename}`;
 
-    db.prepare(`
-      UPDATE techs
-      SET avatar = ?
-      WHERE name = ?
-    `).run(avatarUrl, name);
+   await db.query(
+  `
+    UPDATE techs
+    SET avatar = $1
+    WHERE name = $2
+  `,
+  [avatarUrl, name]
+);
 
-    const tech = db
-      .prepare(`
-        SELECT name, status, blocked, currentJobId, competencies, priorities, avatar
-        FROM techs
-        WHERE name = ?
-      `)
-      .get(name) as any;
+const techResult = await db.query(
+  `
+    SELECT name, status, blocked, "currentJobId", competencies, priorities, avatar
+    FROM techs
+    WHERE name = $1
+  `,
+  [name]
+);
+
+const tech = techResult.rows[0];
 
     res.json(normalizeTechRow(tech));
   } catch (error) {
@@ -760,6 +785,13 @@ app.use(
 /* =========================================================
    START SERVER
 ========================================================= */
-app.listen(PORT, () => {
-  console.log(`Servidor backend en puerto ${PORT}`);
-});
+initDb()
+  .then(() => {
+    app.listen(PORT, () => {
+      console.log(`Servidor backend en puerto ${PORT}`);
+    });
+  })
+  .catch((error) => {
+    console.error("Error inicializando base de datos:", error);
+    process.exit(1);
+  });
