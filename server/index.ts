@@ -388,73 +388,93 @@ const tech = techResult.rows[0];
    JOBS
 ========================================================= */
 
-app.get("/api/jobs", (_req, res) => {
+app.get("/api/jobs", async (_req, res) => {
   try {
-    const rows = db.prepare(`SELECT * FROM jobs ORDER BY id DESC`).all() as any[];
-    res.json(rows.map(normalizeJobRow));
+    const result = await db.query(`SELECT * FROM jobs ORDER BY id DESC`);
+    res.json(result.rows.map(normalizeJobRow));
   } catch (error) {
     console.error("GET /api/jobs error:", error);
     res.status(500).json({ error: "Error obteniendo trabajos" });
   }
 });
 
-app.post("/api/jobs", (req, res) => {
+app.post("/api/jobs", async (req, res) => {
   try {
     const job = req.body ?? {};
 
-    db.prepare(`
-      INSERT OR REPLACE INTO jobs (
-        id,
-        area,
-        plate,
-        urgent,
-        status,
-        assignedNames,
-        reason,
-        createdAtMs,
-        startedAtMs,
-        closedAtMs,
-        template,
-        quickEntryLabel,
-        quickEntryMode,
-        actualMinutes,
-        workedAccumulatedMinutes,
-        pausedAccumulatedMinutes,
-        pausedAtMs
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      job.id,
-      job.area,
-      job.plate,
-      job.urgent ? 1 : 0,
-      job.status ?? "espera",
-      JSON.stringify(Array.isArray(job.assignedNames) ? job.assignedNames : []),
-      job.reason ?? "",
-      job.createdAtMs ?? Date.now(),
-      job.startedAtMs ?? null,
-      job.closedAtMs ?? null,
-      job.template ?? null,
-      job.quickEntryLabel ?? null,
-      job.quickEntryMode ?? null,
-      job.actualMinutes ?? null,
-      job.workedAccumulatedMinutes ?? 0,
-      job.pausedAccumulatedMinutes ?? 0,
-      job.pausedAtMs ?? null
+    const result = await db.query(
+      `
+        INSERT INTO jobs (
+          id,
+          area,
+          plate,
+          urgent,
+          status,
+          "assignedNames",
+          reason,
+          "createdAtMs",
+          "startedAtMs",
+          "closedAtMs",
+          template,
+          "quickEntryLabel",
+          "quickEntryMode",
+          "actualMinutes",
+          "workedAccumulatedMinutes",
+          "pausedAccumulatedMinutes",
+          "pausedAtMs"
+        )
+        VALUES (
+          $1, $2, $3, $4, $5, $6, $7, $8, $9,
+          $10, $11, $12, $13, $14, $15, $16, $17
+        )
+        ON CONFLICT (id) DO UPDATE SET
+          area = EXCLUDED.area,
+          plate = EXCLUDED.plate,
+          urgent = EXCLUDED.urgent,
+          status = EXCLUDED.status,
+          "assignedNames" = EXCLUDED."assignedNames",
+          reason = EXCLUDED.reason,
+          "createdAtMs" = EXCLUDED."createdAtMs",
+          "startedAtMs" = EXCLUDED."startedAtMs",
+          "closedAtMs" = EXCLUDED."closedAtMs",
+          template = EXCLUDED.template,
+          "quickEntryLabel" = EXCLUDED."quickEntryLabel",
+          "quickEntryMode" = EXCLUDED."quickEntryMode",
+          "actualMinutes" = EXCLUDED."actualMinutes",
+          "workedAccumulatedMinutes" = EXCLUDED."workedAccumulatedMinutes",
+          "pausedAccumulatedMinutes" = EXCLUDED."pausedAccumulatedMinutes",
+          "pausedAtMs" = EXCLUDED."pausedAtMs"
+        RETURNING *
+      `,
+      [
+        job.id,
+        job.area,
+        job.plate,
+        !!job.urgent,
+        job.status ?? "espera",
+        JSON.stringify(Array.isArray(job.assignedNames) ? job.assignedNames : []),
+        job.reason ?? "",
+        job.createdAtMs ?? Date.now(),
+        job.startedAtMs ?? null,
+        job.closedAtMs ?? null,
+        job.template ?? null,
+        job.quickEntryLabel ?? null,
+        job.quickEntryMode ?? null,
+        job.actualMinutes ?? null,
+        job.workedAccumulatedMinutes ?? 0,
+        job.pausedAccumulatedMinutes ?? 0,
+        job.pausedAtMs ?? null,
+      ]
     );
 
-    const saved = db
-      .prepare(`SELECT * FROM jobs WHERE id = ?`)
-      .get(job.id) as any;
-
-    res.json(normalizeJobRow(saved));
+    res.json(normalizeJobRow(result.rows[0]));
   } catch (error) {
     console.error("POST /api/jobs error:", error);
     res.status(500).json({ error: "Error guardando trabajo" });
   }
 });
 
-app.post("/api/jobs/:id/finish", (req, res) => {
+app.post("/api/jobs/:id/finish", async (req, res) => {
   try {
     const id = Number(req.params.id);
     const {
@@ -464,23 +484,26 @@ app.post("/api/jobs/:id/finish", (req, res) => {
       pausedAccumulatedMinutes,
     } = req.body ?? {};
 
-    db.prepare(`
-      UPDATE jobs
-      SET
-        status = 'cerrado',
-        closedAtMs = ?,
-        actualMinutes = ?,
-        workedAccumulatedMinutes = ?,
-        pausedAccumulatedMinutes = ?,
-        pausedAtMs = NULL
-      WHERE id = ?
-    `).run(
-      closedAtMs ?? Date.now(),
-      actualMinutes ?? null,
-      workedAccumulatedMinutes ?? actualMinutes ?? 0,
-      pausedAccumulatedMinutes ?? 0,
-      id
-    );
+    await db.query(
+  `
+    UPDATE jobs
+    SET
+      status = 'cerrado',
+      "closedAtMs" = $1,
+      "actualMinutes" = $2,
+      "workedAccumulatedMinutes" = $3,
+      "pausedAccumulatedMinutes" = $4,
+      "pausedAtMs" = NULL
+    WHERE id = $5
+  `,
+  [
+    closedAtMs ?? Date.now(),
+    actualMinutes ?? null,
+    workedAccumulatedMinutes ?? actualMinutes ?? 0,
+    pausedAccumulatedMinutes ?? 0,
+    id,
+  ]
+);
 
     res.json({ ok: true });
   } catch (error) {
@@ -489,11 +512,11 @@ app.post("/api/jobs/:id/finish", (req, res) => {
   }
 });
 
-app.delete("/api/jobs/:id", (req, res) => {
+app.delete("/api/jobs/:id", async (req, res) => {
   try {
     const id = Number(req.params.id);
 
-    db.prepare(`DELETE FROM jobs WHERE id = ?`).run(id);
+    await db.query(`DELETE FROM jobs WHERE id = $1`, [id]);
 
     res.json({ ok: true });
   } catch (error) {
@@ -506,27 +529,31 @@ app.delete("/api/jobs/:id", (req, res) => {
    LOGS
 ========================================================= */
 
-app.get("/api/logs", (_req, res) => {
+app.get("/api/logs", async (_req, res) => {
   try {
-    const logs = db
-      .prepare(`SELECT * FROM logs ORDER BY id DESC LIMIT 50`)
-      .all();
+    const result = await db.query(`SELECT * FROM logs ORDER BY id DESC LIMIT 50`);
 
-    res.json(logs);
+    res.json(result.rows);
   } catch (error) {
     console.error("GET /api/logs error:", error);
     res.status(500).json({ error: "Error obteniendo logs" });
   }
 });
 
-app.post("/api/logs", (req, res) => {
+app.post("/api/logs", async (req, res) => {
   try {
     const log = req.body ?? {};
 
-    db.prepare(`
-      INSERT OR REPLACE INTO logs (id, time, text)
-      VALUES (?, ?, ?)
-    `).run(log.id, log.time, log.text);
+    await db.query(
+      `
+        INSERT INTO logs (id, time, text)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (id) DO UPDATE SET
+          time = EXCLUDED.time,
+          text = EXCLUDED.text
+      `,
+      [log.id, log.time, log.text]
+    );
 
     res.json({ ok: true });
   } catch (error) {
@@ -539,10 +566,10 @@ app.post("/api/logs", (req, res) => {
    RULES
 ========================================================= */
 
-app.get("/api/rules", (_req, res) => {
+app.get("/api/rules", async (_req, res) => {
   try {
-    const rules = db.prepare(`SELECT * FROM rules ORDER BY id ASC`).all();
-    res.json(rules);
+    const result = await db.query(`SELECT * FROM rules ORDER BY id ASC`);
+    res.json(result.rows);
   } catch (error) {
     console.error("GET /api/rules error:", error);
     res.status(500).json({ error: "Error obteniendo reglas" });
@@ -553,7 +580,7 @@ app.get("/api/rules", (_req, res) => {
    QUICK TEMPLATES
 ========================================================= */
 
-app.get("/api/quick-templates", (_req, res) => {
+app.get("/api/quick-templates", async (_req, res) => {
   try {
     const defaults = [
       {
@@ -610,83 +637,93 @@ app.get("/api/quick-templates", (_req, res) => {
       },
     ];
 
-    const insert = db.prepare(`
-      INSERT OR IGNORE INTO quick_templates
-      (key, label, area, mode, allowedTechs, priorityOrder)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `);
-
     for (const item of defaults) {
-      insert.run(
-        item.key,
-        item.label,
-        item.area,
-        item.mode,
-        item.allowedTechs,
-        item.priorityOrder
+      await db.query(
+        `
+          INSERT INTO quick_templates
+          (key, label, area, mode, "allowedTechs", "priorityOrder")
+          VALUES ($1, $2, $3, $4, $5, $6)
+          ON CONFLICT (key) DO NOTHING
+        `,
+        [
+          item.key,
+          item.label,
+          item.area,
+          item.mode,
+          item.allowedTechs,
+          item.priorityOrder,
+        ]
       );
     }
 
-    const rows = db
-      .prepare(`SELECT * FROM quick_templates ORDER BY id ASC`)
-      .all() as any[];
+    const result = await db.query(`
+      SELECT * FROM quick_templates
+      ORDER BY id ASC
+    `);
 
-    res.json(rows.map(normalizeQuickTemplateRow));
+    res.json(result.rows.map(normalizeQuickTemplateRow));
   } catch (error) {
     console.error("GET /api/quick-templates error:", error);
     res.status(500).json({ error: "Error obteniendo entradas rápidas" });
   }
 });
 
-app.post("/api/quick-templates", (req, res) => {
+app.post("/api/quick-templates", async (req, res) => {
   try {
     const t = req.body ?? {};
 
-    db.prepare(`
-      INSERT INTO quick_templates
-      (key, label, area, mode, allowedTechs, priorityOrder)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(
-      t.key,
-      t.label,
-      t.area,
-      t.mode,
-      JSON.stringify(Array.isArray(t.allowedTechs) ? t.allowedTechs : []),
-      JSON.stringify(Array.isArray(t.priorityOrder) ? t.priorityOrder : [])
+    const result = await db.query(
+      `
+        INSERT INTO quick_templates
+        (key, label, area, mode, "allowedTechs", "priorityOrder")
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING *
+      `,
+      [
+        t.key,
+        t.label,
+        t.area,
+        t.mode,
+        JSON.stringify(Array.isArray(t.allowedTechs) ? t.allowedTechs : []),
+        JSON.stringify(Array.isArray(t.priorityOrder) ? t.priorityOrder : []),
+      ]
     );
 
-    const created = db
-      .prepare(`SELECT * FROM quick_templates WHERE key = ?`)
-      .get(t.key) as any;
-
-    res.json(normalizeQuickTemplateRow(created));
+    res.json(normalizeQuickTemplateRow(result.rows[0]));
   } catch (error) {
     console.error("POST /api/quick-templates error:", error);
     res.status(500).json({ error: "Error creando entrada rápida" });
   }
 });
 
-app.put("/api/quick-templates/:key", (req, res) => {
+app.put("/api/quick-templates/:key", async (req, res) => {
   try {
     const key = String(req.params.key);
     const { label, area, mode, allowedTechs, priorityOrder } = req.body ?? {};
 
-    db.prepare(`
-      UPDATE quick_templates
-      SET label = ?, area = ?, mode = ?, allowedTechs = ?, priorityOrder = ?
-      WHERE key = ?
-    `).run(
-      label,
-      area,
-      mode,
-      JSON.stringify(Array.isArray(allowedTechs) ? allowedTechs : []),
-      JSON.stringify(Array.isArray(priorityOrder) ? priorityOrder : []),
-      key
+    const result = await db.query(
+      `
+        UPDATE quick_templates
+        SET
+          label = $1,
+          area = $2,
+          mode = $3,
+          "allowedTechs" = $4,
+          "priorityOrder" = $5
+        WHERE key = $6
+        RETURNING *
+      `,
+      [
+        label,
+        area,
+        mode,
+        JSON.stringify(Array.isArray(allowedTechs) ? allowedTechs : []),
+        JSON.stringify(Array.isArray(priorityOrder) ? priorityOrder : []),
+        key,
+      ]
     );
 
-    const template = db
-      .prepare(`SELECT * FROM quick_templates WHERE key = ?`)
-      .get(key) as any;
+    const template = result.rows[0];
 
     if (!template) {
       return res.status(404).json({ error: "Entrada rápida no encontrada" });
@@ -699,9 +736,12 @@ app.put("/api/quick-templates/:key", (req, res) => {
   }
 });
 
-app.delete("/api/quick-templates/:key", (req, res) => {
+app.delete("/api/quick-templates/:key", async (req, res) => {
   try {
-    db.prepare(`DELETE FROM quick_templates WHERE key = ?`).run(req.params.key);
+    await db.query(`DELETE FROM quick_templates WHERE key = $1`, [
+      req.params.key,
+    ]);
+
     res.json({ ok: true });
   } catch (error) {
     console.error("DELETE /api/quick-templates/:key error:", error);
