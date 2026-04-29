@@ -30,7 +30,8 @@ export async function initDb() {
       area TEXT NOT NULL,
       mode TEXT NOT NULL,
       "allowedTechs" TEXT,
-      "priorityOrder" TEXT
+      "priorityOrder" TEXT,
+      "standardMinutes" INTEGER
     );
 
     CREATE TABLE IF NOT EXISTS techs (
@@ -76,6 +77,11 @@ export async function initDb() {
       time TEXT NOT NULL,
       text TEXT NOT NULL
     );
+  `);
+
+  await pool.query(`
+    ALTER TABLE quick_templates
+    ADD COLUMN IF NOT EXISTS "standardMinutes" INTEGER;
   `);
 
   console.log("PostgreSQL/Supabase inicializado correctamente");
