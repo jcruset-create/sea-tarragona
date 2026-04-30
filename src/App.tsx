@@ -326,7 +326,7 @@ async function downloadBackup() {
         errorData?.error ??
           "No se pudo descargar el backup. Revisa la contraseña."
       );
-
+      
       return;
     }
 
@@ -1376,6 +1376,7 @@ function getOrderedCandidatesForJob(
   });
 }
 
+
 function QuickTemplateEditor({
   template,
   techs,
@@ -1548,7 +1549,13 @@ export default function SeaTarragonaV1() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [scheduledJobs, setScheduledJobs] = useState<ScheduledJob[]>([]);
   const [scheduledJobsLoaded, setScheduledJobsLoaded] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(() => {
+  return localStorage.getItem("sea-authenticated") === "true";
+});
 
+const [loginPassword, setLoginPassword] = useState("");
+const [loginError, setLoginError] = useState("");
+const [loginLoading, setLoginLoading] = useState(false);
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
   const [resetPassword, setResetPassword] = useState("");
   const [resetError, setResetError] = useState("");
@@ -2481,6 +2488,36 @@ setExternalAIAnswer(cleanText || "La IA no devolvió respuesta.");
     appendLog("Error consultando ChatGPT.");
   } finally {
     setExternalAILoading(false);
+  }
+}
+async function handleLogin() {
+  setLoginError("");
+  setLoginLoading(true);
+
+  try {
+    const response = await fetch(`${API_BASE}/api/login`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        password: loginPassword,
+      }),
+    });
+
+    if (!response.ok) {
+      setLoginError("Contraseña incorrecta");
+      return;
+    }
+
+    localStorage.setItem("sea-authenticated", "true");
+    setIsAuthenticated(true);
+    setLoginPassword("");
+  } catch (error) {
+    console.error("Error iniciando sesión:", error);
+    setLoginError("No se pudo iniciar sesión");
+  } finally {
+    setLoginLoading(false);
   }
 }
 
@@ -3734,6 +3771,49 @@ if (view === "agenda") {
     />
   );
 }
+if (!isAuthenticated) {
+  return (
+    <div className="min-h-screen bg-slate-100 p-6 text-slate-900">
+      <div className="mx-auto mt-24 max-w-md rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="mb-2 text-xl font-semibold">
+          Acceso SEA Tarragona
+        </div>
+
+        <p className="mb-5 text-sm text-slate-500">
+          Introduce la contraseña para acceder al panel.
+        </p>
+
+        <input
+          type="password"
+          value={loginPassword}
+          onChange={(e) => setLoginPassword(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              handleLogin();
+            }
+          }}
+          placeholder="Contraseña"
+          className="mb-3 w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-slate-300"
+        />
+
+        {loginError && (
+          <div className="mb-3 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">
+            {loginError}
+          </div>
+        )}
+
+        <button
+          type="button"
+          onClick={handleLogin}
+          disabled={loginLoading}
+          className="w-full rounded-xl bg-slate-900 px-4 py-3 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
+        >
+          {loginLoading ? "Entrando..." : "Entrar"}
+        </button>
+      </div>
+    </div>
+  );
+}
 return (
   <div className="min-h-screen bg-slate-50 p-6 text-slate-900">
     <div className="mx-auto max-w-7xl space-y-6">
@@ -3759,6 +3839,16 @@ return (
           >
             Operativo
           </button>
+          <button
+  type="button"
+  onClick={() => {
+    localStorage.removeItem("sea-authenticated");
+    setIsAuthenticated(false);
+  }}
+  className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700"
+>
+  Salir
+</button>
           <button
   onClick={() => setView("agenda")}
   className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700"

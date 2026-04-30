@@ -825,6 +825,34 @@ app.put("/api/scheduled-jobs", (req, res) => {
 });
 
 /* =========================================================
+   AUTH
+========================================================= */
+
+app.post("/api/login", (req, res) => {
+  try {
+    const { password } = req.body ?? {};
+    const expectedPassword = process.env.APP_PASSWORD;
+
+    if (!expectedPassword) {
+      return res.status(500).json({
+        error: "APP_PASSWORD no está configurada",
+      });
+    }
+
+    if (password !== expectedPassword) {
+      return res.status(401).json({
+        error: "Contraseña incorrecta",
+      });
+    }
+
+    res.json({ ok: true });
+  } catch (error) {
+    console.error("POST /api/login error:", error);
+    res.status(500).json({ error: "Error iniciando sesión" });
+  }
+});
+
+/* =========================================================
    BACKUP
 ========================================================= */
 
