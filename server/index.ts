@@ -108,7 +108,59 @@ function requireAdmin(req: express.Request, res: express.Response, next: express
 
   next();
 }
+type UserRole = "admin" | "supervisor" | "operario";
 
+function getRoleFromRequest(req: express.Request): UserRole | null {
+  const token = String(req.headers["x-admin-token"] ?? "");
+
+  if (process.env.ADMIN_PASSWORD && token === process.env.ADMIN_PASSWORD) {
+    return "admin";
+  }
+
+  if (
+    process.env.SUPERVISOR_PASSWORD &&
+    token === process.env.SUPERVISOR_PASSWORD
+  ) {
+    return "supervisor";
+  }
+
+  if (
+    process.env.OPERARIO_PASSWORD &&
+    token === process.env.OPERARIO_PASSWORD
+  ) {
+    return "operario";
+  }
+
+  return null;
+}
+
+function requireRole(allowedRoles: UserRole[]) {
+  return (
+    req: express.Request,
+    res: express.Response,
+    next: express.NextFunction
+  ) => {
+    const role = getRoleFromRequest(req);
+
+    if (!role) {
+      return res.status(401).json({
+        error: "No autorizado",
+      });
+    }
+
+    if (!allowedRoles.includes(role)) {
+      return res.status(403).json({
+        error: "Permisos insuficientes",
+      });
+    }
+
+    next();
+  };
+}
+
+const requireAdminRole = requireRole(["admin"]);
+const requireSupervisorRole = requireRole(["admin", "supervisor"]);
+const requireOperarioRole = requireRole(["admin", "supervisor", "operario"]);
 app.use((req, _res, next) => {
   console.log(`[REQ] ${req.method} ${req.url}`);
   next();
@@ -160,7 +212,7 @@ app.get("/api/ai-test", async (req, res) => {
    RESET
 ========================================================= */
 
-app.post("/api/reset", requireAdmin, async (req, res) => {
+app.post("/api/reset", requireAdminRole, async (req, res) => {
   try {
     const { password } = req.body ?? {};
 
@@ -287,7 +339,7 @@ app.get("/api/techs", async (_req, res) => {
   }
 });
 
-app.put("/api/techs/:name", async (req, res) => {
+app.put("/api/techs/:name", requireAdminRole, async (req, res) => {
   try {
     const name = String(req.params.name);
     const { status, blocked, currentJobId, competencies, priorities, avatar } =
@@ -346,7 +398,7 @@ const tech = techResult.rows[0];
 
 app.post(
   "/api/techs/:name/avatar",
-  requireAdmin,
+  requireAdminRole,
   upload.single("avatar"),
   async (req, res) => {
     try {
@@ -435,7 +487,7 @@ app.get("/api/jobs", async (_req, res) => {
   }
 });
 
-app.post("/api/jobs", async (req, res) => {
+app.post("/api/jobs", requireSupervisorRole, async (req, res) => {
   try {
     const job = req.body ?? {};
 
@@ -715,7 +767,7 @@ app.get("/api/quick-templates", async (_req, res) => {
   }
 });
 
-app.post("/api/quick-templates", requireAdmin, async (req, res) => {
+app.post("/api/quick-templates", requireSupervisorRole, async (req, res) => {
   try {
     const t = req.body ?? {};
 
@@ -744,7 +796,7 @@ app.post("/api/quick-templates", requireAdmin, async (req, res) => {
   }
 });
 
-app.put("/api/quick-templates/:key", requireAdmin, async (req, res) => {
+app.put("/api/quick-templates/:key", requireSupervisorRole, async (req, res) => {
   try {
     const key = String(req.params.key);
     const { label, area, mode, allowedTechs, priorityOrder, standardMinutes } =
@@ -787,7 +839,7 @@ app.put("/api/quick-templates/:key", requireAdmin, async (req, res) => {
   }
 });
 
-app.delete("/api/quick-templates/:key", requireAdmin, async (req, res) => {
+app.delete("/api/quick-templates/:key", requireAdminRole, async (req, res) => {
   try {
     await db.query(`DELETE FROM quick_templates WHERE key = $1`, [
       req.params.key,
@@ -850,21 +902,32 @@ app.put("/api/scheduled-jobs", (req, res) => {
 app.post("/api/login", (req, res) => {
   try {
     const { password } = req.body ?? {};
-    const expectedPassword = process.env.APP_PASSWORD;
 
-    if (!expectedPassword) {
-      return res.status(500).json({
-        error: "APP_PASSWORD no está configurada",
-      });
-    }
+    const roles = [
+      {
+        role: "admin",
+        password: process.env.ADMIN_PASSWORD,
+      },
+      {
+        role: "supervisor",
+        password: process.env.SUPERVISOR_PASSWORD,
+      },
+    ] as const;
 
-    if (password !== expectedPassword) {
+    const match = roles.find(
+      (item) => item.password && password === item.password
+    );
+
+    if (!match) {
       return res.status(401).json({
         error: "Contraseña incorrecta",
       });
     }
 
-    res.json({ ok: true });
+    res.json({
+      ok: true,
+      role: match.role,
+    });
   } catch (error) {
     console.error("POST /api/login error:", error);
     res.status(500).json({ error: "Error iniciando sesión" });
@@ -875,7 +938,7 @@ app.post("/api/login", (req, res) => {
    BACKUP
 ========================================================= */
 
-app.get("/api/backup", requireAdmin, async (req, res) => {
+app.get("/api/backup", requireAdminRole, async (req, res) => {
   try {
         const password = String(req.query.password ?? "");
     const expectedPassword = process.env.BACKUP_PASSWORD;

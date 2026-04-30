@@ -1566,6 +1566,18 @@ export default function SeaTarragonaV1() {
 const [loginPassword, setLoginPassword] = useState("");
 const [loginError, setLoginError] = useState("");
 const [loginLoading, setLoginLoading] = useState(false);
+const [userRole, setUserRole] = useState<"admin" | "supervisor" | null>(() => {
+  const stored = localStorage.getItem("sea-role");
+
+  if (stored === "admin" || stored === "supervisor") {
+    return stored;
+  }
+
+  return null;
+});
+
+const isAdmin = userRole === "admin";
+const isSupervisor = userRole === "admin" || userRole === "supervisor";
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
   const [resetPassword, setResetPassword] = useState("");
   const [resetError, setResetError] = useState("");
@@ -2520,8 +2532,13 @@ async function handleLogin() {
       return;
     }
 
-    localStorage.setItem("sea-authenticated", "true");
+const data = await response.json();
+
+localStorage.setItem("sea-authenticated", "true");
 localStorage.setItem("sea-admin-token", loginPassword);
+localStorage.setItem("sea-role", data.role);
+
+setUserRole(data.role);
 setIsAuthenticated(true);
 setLoginPassword("");
   } catch (error) {
@@ -3059,14 +3076,22 @@ async function addQuickTemplate() {
   }
 }
 
- async function removeQuickTemplate(key: string) {
+async function removeQuickTemplate(key: string) {
   try {
-   await fetchWithTimeout(`${API_BASE}/api/quick-templates/${key}`, {
-  method: "DELETE",
-  headers: getAdminHeaders(),
-});
+    const response = await fetchWithTimeout(
+      `${API_BASE}/api/quick-templates/${key}`,
+      {
+        method: "DELETE",
+        headers: getAdminHeaders(),
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error("No se pudo eliminar la entrada rápida");
+    }
 
     setQuickTemplates((prev) => prev.filter((t) => t.key !== key));
+
     setQuickDraft((prev) =>
       prev.templateKey === key
         ? { templateKey: "", plate: "", urgent: false }
@@ -3076,6 +3101,7 @@ async function addQuickTemplate() {
     appendLog("Entrada rápida eliminada.");
   } catch (error) {
     console.error("Error eliminando entrada rápida:", error);
+    appendLog("Error al eliminar la entrada rápida.");
   }
 }
 
@@ -3863,8 +3889,11 @@ return (
   type="button"
   onClick={() => {
     localStorage.removeItem("sea-authenticated");
-    setIsAuthenticated(false);
-    localStorage.removeItem("sea-admin-token");
+localStorage.removeItem("sea-admin-token");
+localStorage.removeItem("sea-role");
+
+setUserRole(null);
+setIsAuthenticated(false);
   }}
   className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700"
 >
@@ -3901,16 +3930,18 @@ return (
             <div className="text-sm font-medium text-slate-700">
               Reglas del sistema
             </div>
-           <button
-            onClick={() => {
-            setResetError("");
-            setResetPassword("");
-            setResetConfirmOpen(true);
-            }}
-              className="rounded-lg border border-red-200 px-3 py-2 text-xs font-medium text-red-700 hover:bg-red-50"
-            >
-              Reiniciar jornada
-            </button>
+           {isAdmin && (
+  <button
+    onClick={() => {
+      setResetError("");
+      setResetPassword("");
+      setResetConfirmOpen(true);
+    }}
+    className="rounded-lg border border-red-200 px-3 py-2 text-xs font-medium text-red-700 hover:bg-red-50"
+  >
+    Reiniciar jornada
+  </button>
+)}
           </div>
 
           <div className="space-y-2">
@@ -3998,7 +4029,7 @@ return (
         </div>
       )}
 
-            {view === "ajustes" && (
+            {view === "ajustes" && isAdmin && (
         <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="mb-2 text-sm font-semibold text-slate-800">
             Copia de seguridad
@@ -4417,7 +4448,7 @@ return (
     })}
   </div>
 
-  {view === "ajustes" && (
+  {view === "ajustes" && isSupervisor && (
     <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
       <div className="mb-3 text-sm font-medium text-slate-700">
         Crear entrada rápida
