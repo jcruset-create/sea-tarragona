@@ -309,6 +309,15 @@ function nowMs(): number {
   return Date.now();
 }
 
+function downloadBackup() {
+  const link = document.createElement("a");
+  link.href = `${API_BASE}/api/backup`;
+  link.download = "";
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
 function nowTime(): string {
   return new Date().toLocaleTimeString("es-ES", {
     hour: "2-digit",
@@ -332,6 +341,7 @@ function formatMinutes(minutes?: number | null): string {
   if (h <= 0) return `${m} min`;
   return `${h} h ${m} min`;
 }
+
 
 function getTechAvatarUrl(tech?: Tech | null): string {
   if (!tech?.avatar) {
@@ -3841,6 +3851,25 @@ return (
         </div>
       )}
 
+            {view === "ajustes" && (
+        <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="mb-2 text-sm font-semibold text-slate-800">
+            Copia de seguridad
+          </div>
+
+          <p className="mb-4 text-sm text-slate-500">
+            Descarga un archivo JSON con técnicos, trabajos, logs, reglas y entradas rápidas.
+          </p>
+
+          <button
+            type="button"
+            onClick={downloadBackup}
+            className="rounded-xl bg-slate-900 px-4 py-2 text-sm text-white hover:bg-slate-800"
+          >
+            Descargar backup
+          </button>
+        </div>
+      )}
       {view === "ajustes" && (
         <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="mb-3 text-sm font-medium text-slate-700">

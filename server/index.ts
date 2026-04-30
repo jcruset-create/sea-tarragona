@@ -825,6 +825,52 @@ app.put("/api/scheduled-jobs", (req, res) => {
 });
 
 /* =========================================================
+   BACKUP
+========================================================= */
+
+app.get("/api/backup", async (_req, res) => {
+  try {
+    const tables = [
+      "techs",
+      "jobs",
+      "logs",
+      "rules",
+      "quick_templates",
+      "job_assignments",
+    ];
+
+    const data: Record<string, unknown[]> = {};
+
+    for (const table of tables) {
+      const result = await db.query(`SELECT * FROM ${table} ORDER BY id ASC`);
+      data[table] = result.rows;
+    }
+
+    const backup = {
+      createdAt: new Date().toISOString(),
+      source: "sea-tarragona",
+      tables: data,
+    };
+
+    const timestamp = new Date()
+      .toISOString()
+      .replace(/:/g, "-")
+      .replace(/\..+/, "");
+
+    res.setHeader("Content-Type", "application/json");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="sea-tarragona-backup-${timestamp}.json"`
+    );
+
+    res.send(JSON.stringify(backup, null, 2));
+  } catch (error) {
+    console.error("GET /api/backup error:", error);
+    res.status(500).json({ error: "Error creando backup" });
+  }
+});
+
+/* =========================================================
    FRONTEND REACT / VITE
 ========================================================= */
 
