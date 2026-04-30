@@ -90,6 +90,24 @@ if (!fs.existsSync(uploadsDir)) {
 
 app.use(cors());
 app.use(express.json({ limit: "10mb" }));
+function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const expectedToken = process.env.ADMIN_TOKEN;
+  const token = String(req.headers["x-admin-token"] ?? "");
+
+  if (!expectedToken) {
+    return res.status(500).json({
+      error: "ADMIN_TOKEN no está configurado",
+    });
+  }
+
+  if (token !== expectedToken) {
+    return res.status(401).json({
+      error: "No autorizado",
+    });
+  }
+
+  next();
+}
 
 app.use((req, _res, next) => {
   console.log(`[REQ] ${req.method} ${req.url}`);
@@ -142,7 +160,7 @@ app.get("/api/ai-test", async (req, res) => {
    RESET
 ========================================================= */
 
-app.post("/api/reset", async (req, res) => {
+app.post("/api/reset", requireAdmin, async (req, res) => {
   try {
     const { password } = req.body ?? {};
 
@@ -328,6 +346,7 @@ const tech = techResult.rows[0];
 
 app.post(
   "/api/techs/:name/avatar",
+  requireAdmin,
   upload.single("avatar"),
   async (req, res) => {
     try {
@@ -696,7 +715,7 @@ app.get("/api/quick-templates", async (_req, res) => {
   }
 });
 
-app.post("/api/quick-templates", async (req, res) => {
+app.post("/api/quick-templates", requireAdmin, async (req, res) => {
   try {
     const t = req.body ?? {};
 
@@ -725,7 +744,7 @@ app.post("/api/quick-templates", async (req, res) => {
   }
 });
 
-app.put("/api/quick-templates/:key", async (req, res) => {
+app.put("/api/quick-templates/:key", requireAdmin, async (req, res) => {
   try {
     const key = String(req.params.key);
     const { label, area, mode, allowedTechs, priorityOrder, standardMinutes } =
@@ -768,7 +787,7 @@ app.put("/api/quick-templates/:key", async (req, res) => {
   }
 });
 
-app.delete("/api/quick-templates/:key", async (req, res) => {
+app.delete("/api/quick-templates/:key", requireAdmin, async (req, res) => {
   try {
     await db.query(`DELETE FROM quick_templates WHERE key = $1`, [
       req.params.key,
@@ -856,7 +875,7 @@ app.post("/api/login", (req, res) => {
    BACKUP
 ========================================================= */
 
-app.get("/api/backup", async (req, res) => {
+app.get("/api/backup", requireAdmin, async (req, res) => {
   try {
         const password = String(req.query.password ?? "");
     const expectedPassword = process.env.BACKUP_PASSWORD;

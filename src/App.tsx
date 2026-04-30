@@ -316,8 +316,11 @@ async function downloadBackup() {
 
   try {
     const response = await fetch(
-      `${API_BASE}/api/backup?password=${encodeURIComponent(password)}`
-    );
+  `${API_BASE}/api/backup?password=${encodeURIComponent(password)}`,
+  {
+    headers: getAdminHeaders(),
+  }
+);
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => null);
@@ -353,7 +356,14 @@ async function downloadBackup() {
     alert("Error descargando backup.");
   }
 }
+function getAdminHeaders(extra?: HeadersInit): HeadersInit {
+  const token = localStorage.getItem("sea-admin-token") ?? "";
 
+  return {
+    ...(extra ?? {}),
+    "x-admin-token": token,
+  };
+}
 function nowTime(): string {
   return new Date().toLocaleTimeString("es-ES", {
     hour: "2-digit",
@@ -2511,8 +2521,9 @@ async function handleLogin() {
     }
 
     localStorage.setItem("sea-authenticated", "true");
-    setIsAuthenticated(true);
-    setLoginPassword("");
+localStorage.setItem("sea-admin-token", loginPassword);
+setIsAuthenticated(true);
+setLoginPassword("");
   } catch (error) {
     console.error("Error iniciando sesión:", error);
     setLoginError("No se pudo iniciar sesión");
@@ -2520,7 +2531,14 @@ async function handleLogin() {
     setLoginLoading(false);
   }
 }
+function getAdminHeaders(extra?: HeadersInit): HeadersInit {
+  const token = localStorage.getItem("sea-admin-token") ?? "";
 
+  return {
+    ...(extra ?? {}),
+    "x-admin-token": token,
+  };
+}
 function appendLog(text: string) {
   const entry: LogItem = {
     id: Date.now() + Math.random(),
@@ -2609,10 +2627,11 @@ async function uploadTechAvatar(file: File, techName: string) {
   formData.append("avatar", file);
 
   try {
-    const response = await fetch(`${API_BASE}/api/techs/${encodeURIComponent(techName)}/avatar`, {
-      method: "POST",
-      body: formData,
-    });
+    const response = await fetchWithTimeout(`${API_BASE}/api/techs/${name}/avatar`, {
+  method: "POST",
+  headers: getAdminHeaders(),
+  body: formData,
+});
 
     const updatedTech = await response.json();
 
@@ -3010,9 +3029,9 @@ async function addQuickTemplate() {
   try {
     const response = await fetchWithTimeout(`${API_BASE}/api/quick-templates`, {
       method: "POST",
-      headers: {
+      headers: getAdminHeaders({
         "Content-Type": "application/json",
-      },
+      }),
       body: JSON.stringify(template),
     });
 
@@ -3042,9 +3061,10 @@ async function addQuickTemplate() {
 
  async function removeQuickTemplate(key: string) {
   try {
-    await fetchWithTimeout(`${API_BASE}/api/quick-templates/${key}`, {
-      method: "DELETE",
-    });
+   await fetchWithTimeout(`${API_BASE}/api/quick-templates/${key}`, {
+  method: "DELETE",
+  headers: getAdminHeaders(),
+});
 
     setQuickTemplates((prev) => prev.filter((t) => t.key !== key));
     setQuickDraft((prev) =>
@@ -3401,14 +3421,14 @@ async function resetAllSystem() {
     setResetError("");
 
     const response = await fetchWithTimeout(`${API_BASE}/api/reset`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        password: resetPassword,
-      }),
-    });
+  method: "POST",
+  headers: getAdminHeaders({
+    "Content-Type": "application/json",
+  }),
+  body: JSON.stringify({
+    password: resetPassword,
+  }),
+});
 
     const data = await response.json();
 
@@ -3844,6 +3864,7 @@ return (
   onClick={() => {
     localStorage.removeItem("sea-authenticated");
     setIsAuthenticated(false);
+    localStorage.removeItem("sea-admin-token");
   }}
   className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700"
 >
