@@ -828,8 +828,22 @@ app.put("/api/scheduled-jobs", (req, res) => {
    BACKUP
 ========================================================= */
 
-app.get("/api/backup", async (_req, res) => {
+app.get("/api/backup", async (req, res) => {
   try {
+        const password = String(req.query.password ?? "");
+    const expectedPassword = process.env.BACKUP_PASSWORD;
+
+    if (!expectedPassword) {
+      return res.status(500).json({
+        error: "BACKUP_PASSWORD no está configurada",
+      });
+    }
+
+    if (password !== expectedPassword) {
+      return res.status(401).json({
+        error: "Contraseña de backup incorrecta",
+      });
+    }
     const tables = [
       "techs",
       "jobs",
