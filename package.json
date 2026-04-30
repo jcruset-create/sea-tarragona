@@ -12,7 +12,8 @@
     "server": "tsx server/index.ts",
     "start": "tsx server/index.ts",
     "seed": "tsx server/seed.ts",
-    "backup:postgres": "tsx server/backup-postgres.ts"
+    "backup:postgres": "tsx server/backup-postgres.ts",
+    "restore:postgres": "tsx server/restore-postgres.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.105.1",
