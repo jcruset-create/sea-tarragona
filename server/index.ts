@@ -7,6 +7,7 @@ import fs from "fs";
 import multer from "multer";
 import { fileURLToPath } from "url";
 import db, { initDb } from "./db.ts";
+import { supabase, SUPABASE_STORAGE_BUCKET } from "./supabase.ts";
 import OpenAI from "openai";
 
 
@@ -101,22 +102,12 @@ app.use("/uploads", express.static(uploadsDir));
    MULTER
 ========================================================= */
 
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => {
-    cb(null, uploadsDir);
-  },
-  filename: (req, file, cb) => {
-    const safeName = String(req.params.name)
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .replace(/[^a-zA-Z0-9_-]/g, "_");
-
-    const ext = path.extname(file.originalname) || ".jpg";
-    cb(null, `${safeName}_${Date.now()}${ext}`);
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 5 * 1024 * 1024,
   },
 });
-
-const upload = multer({ storage });
 
 /* =========================================================
    BASIC
@@ -335,53 +326,81 @@ const tech = techResult.rows[0];
   }
 });
 
-app.post("/api/techs/:name/avatar", upload.single("avatar"), async (req, res) => {
-try {
-    const name = String(req.params.name);
+app.post(
+  "/api/techs/:name/avatar",
+  upload.single("avatar"),
+  async (req, res) => {
+    try {
+      const name = String(req.params.name);
 
-    if (!req.file) {
-      return res.status(400).json({ error: "No se recibió archivo" });
+      if (!req.file) {
+        return res.status(400).json({ error: "No se recibió archivo" });
+      }
+
+      const existsResult = await db.query(
+        `SELECT avatar FROM techs WHERE name = $1`,
+        [name]
+      );
+
+      const exists = existsResult.rows[0];
+
+      if (!exists) {
+        return res.status(404).json({ error: "Técnico no encontrado" });
+      }
+
+      const safeName = name
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-zA-Z0-9_-]/g, "_");
+
+      const ext = path.extname(req.file.originalname) || ".jpg";
+      const filePath = `techs/${safeName}_${Date.now()}${ext}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from(SUPABASE_STORAGE_BUCKET)
+        .upload(filePath, req.file.buffer, {
+          contentType: req.file.mimetype,
+          upsert: true,
+        });
+
+      if (uploadError) {
+        console.error("Supabase Storage upload error:", uploadError);
+        return res.status(500).json({ error: "Error subiendo avatar" });
+      }
+
+      const { data } = supabase.storage
+        .from(SUPABASE_STORAGE_BUCKET)
+        .getPublicUrl(filePath);
+
+      const avatarUrl = data.publicUrl;
+
+      await db.query(
+        `
+          UPDATE techs
+          SET avatar = $1
+          WHERE name = $2
+        `,
+        [avatarUrl, name]
+      );
+
+      const techResult = await db.query(
+        `
+          SELECT name, status, blocked, "currentJobId", competencies, priorities, avatar
+          FROM techs
+          WHERE name = $1
+        `,
+        [name]
+      );
+
+      const tech = techResult.rows[0];
+
+      res.json(normalizeTechRow(tech));
+    } catch (error) {
+      console.error("POST /api/techs/:name/avatar error:", error);
+      res.status(500).json({ error: "Error subiendo avatar" });
     }
-
-    const existsResult = await db.query(
-  `SELECT avatar FROM techs WHERE name = $1`,
-  [name]
-);
-
-const exists = existsResult.rows[0];
-
-    if (!exists) {
-      return res.status(404).json({ error: "Técnico no encontrado" });
-    }
-
-    const avatarUrl = `/uploads/${req.file.filename}`;
-
-   await db.query(
-  `
-    UPDATE techs
-    SET avatar = $1
-    WHERE name = $2
-  `,
-  [avatarUrl, name]
-);
-
-const techResult = await db.query(
-  `
-    SELECT name, status, blocked, "currentJobId", competencies, priorities, avatar
-    FROM techs
-    WHERE name = $1
-  `,
-  [name]
-);
-
-const tech = techResult.rows[0];
-
-    res.json(normalizeTechRow(tech));
-  } catch (error) {
-    console.error("POST /api/techs/:name/avatar error:", error);
-    res.status(500).json({ error: "Error subiendo avatar" });
   }
-});
+);
 
 /* =========================================================
    JOBS
