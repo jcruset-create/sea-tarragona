@@ -35,6 +35,7 @@ type QuickTemplate = {
   mode: QuickEntryMode;
   allowedTechs: string[];
   priorityOrder: string[];
+  standardMinutes?: number | null;
 };
 
 type RoleCapability = {
@@ -1352,7 +1353,19 @@ function QuickTemplateEditor({
         className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
         placeholder="Nombre"
       />
-
+<input
+  type="number"
+  min="0"
+  value={draft.standardMinutes ?? ""}
+  onChange={(e) =>
+    setDraft((prev) => ({
+      ...prev,
+      standardMinutes: e.target.value ? Number(e.target.value) : null,
+    }))
+  }
+  placeholder="Tiempo estándar en minutos"
+  className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+/>
       <div className="grid gap-3 md:grid-cols-2">
         <select
           value={draft.area}
@@ -1535,12 +1548,14 @@ const [newQuickTemplate, setNewQuickTemplate] = useState<{
   mode: QuickEntryMode;
   allowedTechs: string[];
   priorityOrder: string[];
+  standardMinutes: string;
 }>({
   label: "",
   area: "camion",
   mode: "single",
   allowedTechs: [],
   priorityOrder: [],
+  standardMinutes: "",
 });
 
 const [editingQuickTemplateKey, setEditingQuickTemplateKey] = useState<string | null>(null);
@@ -2904,6 +2919,9 @@ async function addQuickTemplate() {
     mode: newQuickTemplate.mode,
     allowedTechs: finalAllowedTechs,
     priorityOrder: finalPriorityOrder,
+    standardMinutes: newQuickTemplate.standardMinutes
+      ? Number(newQuickTemplate.standardMinutes)
+      : null,
   };
 
   try {
@@ -2929,6 +2947,7 @@ async function addQuickTemplate() {
       mode: "single",
       allowedTechs: [],
       priorityOrder: [],
+      standardMinutes: "",
     });
 
     appendLog(`Entrada rápida creada: ${label}.`);
@@ -4166,6 +4185,12 @@ return (
                         : "técnico + refuerzo"}
                     </span>
 
+                    {template.standardMinutes != null && (
+  <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-700">
+    {template.standardMinutes} min estándar
+  </span>
+)}
+
                     {view === "ajustes" && (
                       <div className="flex items-center gap-2">
                         <button
@@ -4222,50 +4247,64 @@ return (
         Crear entrada rápida
       </div>
 
-      <div className="grid gap-3 md:grid-cols-4">
-        <input
-          value={newQuickTemplate.label}
-          onChange={(e) =>
-            setNewQuickTemplate((p) => ({
-              ...p,
-              label: e.target.value,
-            }))
-          }
-          placeholder="Nombre entrada rápida"
-          className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm md:col-span-2"
-        />
+      <div className="grid gap-4 md:grid-cols-4">
+  <input
+    value={newQuickTemplate.label}
+    onChange={(e) =>
+      setNewQuickTemplate((p) => ({
+        ...p,
+        label: e.target.value,
+      }))
+    }
+    placeholder="Nombre entrada rápida"
+    className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm md:col-span-2"
+  />
 
-        <select
-          value={newQuickTemplate.area}
-          onChange={(e) =>
-            setNewQuickTemplate((p) => ({
-              ...p,
-              area: e.target.value as AreaKey,
-            }))
-          }
-          className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
-        >
-          {Object.entries(AREA_META).map(([key, meta]) => (
-            <option key={key} value={key}>
-              {meta.label}
-            </option>
-          ))}
-        </select>
+  <input
+    type="number"
+    min="0"
+    value={newQuickTemplate.standardMinutes ?? ""}
+    onChange={(e) =>
+      setNewQuickTemplate((prev) => ({
+        ...prev,
+        standardMinutes: e.target.value,
+      }))
+    }
+    placeholder="Tiempo estándar en minutos"
+    className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+  />
 
-        <select
-          value={newQuickTemplate.mode}
-          onChange={(e) =>
-            setNewQuickTemplate((p) => ({
-              ...p,
-              mode: e.target.value as QuickEntryMode,
-            }))
-          }
-          className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
-        >
-          <option value="single">1 técnico</option>
-          <option value="team">técnico + refuerzo</option>
-        </select>
-      </div>
+  <select
+    value={newQuickTemplate.area}
+    onChange={(e) =>
+      setNewQuickTemplate((p) => ({
+        ...p,
+        area: e.target.value as AreaKey,
+      }))
+    }
+    className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+  >
+    {Object.entries(AREA_META).map(([key, meta]) => (
+      <option key={key} value={key}>
+        {meta.label}
+      </option>
+    ))}
+  </select>
+
+  <select
+    value={newQuickTemplate.mode}
+    onChange={(e) =>
+      setNewQuickTemplate((p) => ({
+        ...p,
+        mode: e.target.value as QuickEntryMode,
+      }))
+    }
+    className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+  >
+    <option value="single">1 técnico</option>
+    <option value="team">técnico + refuerzo</option>
+  </select>
+</div>
 
       <div className="mt-4">
         <div className="mb-2 text-sm font-medium text-slate-700">
