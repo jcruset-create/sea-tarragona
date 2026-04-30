@@ -26,9 +26,11 @@ dist-ssr
 *.db
 backups/
 server/uploads/
-  
+ 
+ 
  
 .env
 *.db
 backups/
 server/uploads/
+backups-postgres/

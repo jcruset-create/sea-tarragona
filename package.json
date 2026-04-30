@@ -11,7 +11,8 @@
     "backup": "node scripts/backup.cjs",
     "server": "tsx server/index.ts",
     "start": "tsx server/index.ts",
-    "seed": "tsx server/seed.ts"
+    "seed": "tsx server/seed.ts",
+    "backup:postgres": "tsx server/backup-postgres.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.105.1",
