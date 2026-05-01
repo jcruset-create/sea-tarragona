@@ -657,22 +657,25 @@ function canUseTechForArea(
 
   if (!tech.competencies[targetKey]?.[role]) return false;
 
-  const isFree =
-    tech.currentJobId == null &&
-    (tech.status === "disponible" ||
-      (tech.status === "supervisor" && (allowSupervisorManual || allowRamonAuto)));
+const isFree =
+  tech.currentJobId == null &&
+  (tech.status === "disponible" ||
+    (tech.status === "supervisor" && (allowSupervisorManual || allowRamonAuto)));
 
-  const isExtractableSupport =
-    tech.status === "refuerzo" && canExtractSupportFromJob(tech, jobs);
+const isExtractableSupport =
+  includeSupport &&
+  !forSupportRole &&
+  tech.status === "refuerzo" &&
+  canExtractSupportFromJob(tech, jobs);
 
-  if (!isFree && !(includeSupport && isExtractableSupport)) return false;
+if (!isFree && !isExtractableSupport) return false;
 
   if (area === "movil" && role === "responsable") {
     if (!tech.competencies.movil.responsable) return false;
   }
 
   if (forSupportRole) {
-    return isFree || (includeSupport && isExtractableSupport);
+   return isFree || isExtractableSupport;
   }
 
   if (
@@ -896,39 +899,32 @@ function allocateJobPure(
 
   if (job.area === "camion" && !isSingleAssignment(job)) {
     const freeSupport = getOrderedCandidatesForJob(
-      job,
-      techs,
-      cleanedJobs,
-      "apoyo",
-      quickTemplates,
-      {
-        includeSupport: false,
-        allowSupervisorManual: false,
-        allowRamonAuto: false,
-        forSupportRole: true,
-      },
-      techStats,
-      techLoadStats
-    ).filter((t) => t.name !== assignedNames[0] && t.name !== "Ramón");
+  job,
+  techs,
+  cleanedJobs,
+  "apoyo",
+  quickTemplates,
+  {
+    includeSupport: false,
+    allowSupervisorManual: false,
+    allowRamonAuto: false,
+    forSupportRole: true,
+  },
+  techStats,
+  techLoadStats
+).filter((t) => {
+  if (t.name === assignedNames[0]) return false;
+  if (t.name === "Ramón") return false;
 
-    const fallbackSupport =
-      freeSupport.length === 0
-        ? getOrderedCandidatesForJob(
-            job,
-            techs,
-            cleanedJobs,
-            "apoyo",
-            quickTemplates,
-            {
-              includeSupport: true,
-              allowSupervisorManual: false,
-              allowRamonAuto: false,
-              forSupportRole: true,
-            },
-            techStats,
-            techLoadStats
-          ).filter((t) => t.name !== assignedNames[0] && t.name !== "Ramón")
-        : [];
+  // Regla crítica:
+  // Un apoyo/refuerzo nuevo solo puede salir de técnicos totalmente libres.
+  if (t.currentJobId != null) return false;
+  if (t.status !== "disponible") return false;
+
+  return true;
+});
+
+ const fallbackSupport: Tech[] = [];
 
     const supportPool = freeSupport.length > 0 ? freeSupport : fallbackSupport;
 
