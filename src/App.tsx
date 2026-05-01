@@ -2062,9 +2062,9 @@ useEffect(() => {
 
   fetchWithTimeout(`${API_BASE}/api/scheduled-jobs`, {
     method: "PUT",
-    headers: {
+    headers: getAdminHeaders({
       "Content-Type": "application/json",
-    },
+    }),
     body: JSON.stringify(scheduledJobs),
   }).catch((error) => {
     console.error("Error guardando agenda:", error);
@@ -2589,12 +2589,12 @@ async function reloadJobsFromBackend() {
 async function saveJobToBackend(job: Job) {
   try {
     await fetchWithTimeout(`${API_BASE}/api/jobs`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(job),
-    });
+  method: "POST",
+  headers: getAdminHeaders({
+    "Content-Type": "application/json",
+  }),
+  body: JSON.stringify(job),
+});
   } catch (error) {
     console.error("Error guardando trabajo:", error);
     appendLog(`Error guardando trabajo ${job.plate}.`);
@@ -2622,11 +2622,11 @@ async function reloadQuickTemplatesFromBackend() {
 
 function saveTechToBackend(tech: Tech) {
   fetch(`${API_BASE}/api/techs/${encodeURIComponent(tech.name)}`, {
-    method: "PUT",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
+  method: "PUT",
+  headers: getAdminHeaders({
+    "Content-Type": "application/json",
+  }),
+  body: JSON.stringify({
       status: tech.status,
       blocked: tech.blocked,
       currentJobId: tech.currentJobId,
@@ -2939,12 +2939,12 @@ const supported = assignAsSupportIfPossible(
 
   try {
     await fetchWithTimeout(`${API_BASE}/api/jobs`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(finalJob),
-    });
+  method: "POST",
+  headers: getAdminHeaders({
+    "Content-Type": "application/json",
+  }),
+  body: JSON.stringify(finalJob),
+});
 
     for (const tech of supported.techs) {
       saveTechToBackend(tech);
@@ -2997,12 +2997,12 @@ async function createTemplateEntry() {
 
   try {
     await fetchWithTimeout(`${API_BASE}/api/jobs`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(finalJob),
-    });
+  method: "POST",
+  headers: getAdminHeaders({
+    "Content-Type": "application/json",
+  }),
+  body: JSON.stringify(finalJob),
+});
 
     for (const tech of supported.techs) {
       saveTechToBackend(tech);
@@ -3122,8 +3122,9 @@ async function deleteWaitingJob(jobId: number) {
 
   try {
     await fetch(`${API_BASE}/api/jobs/${jobId}`, {
-      method: "DELETE",
-    });
+  method: "DELETE",
+  headers: getAdminHeaders(),
+});
 
     await reloadJobsFromBackend();
   } catch (error) {
@@ -3356,11 +3357,11 @@ async function finishJob(jobId: number) {
 
   try {
     await fetch(`${API_BASE}/api/jobs/${jobId}/finish`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
+  method: "POST",
+  headers: getAdminHeaders({
+    "Content-Type": "application/json",
+  }),
+  body: JSON.stringify({
         closedAtMs,
         actualMinutes,
         workedAccumulatedMinutes: actualMinutes,
@@ -3385,12 +3386,12 @@ async function finishJob(jobId: number) {
 async function updateQuickTemplate(updatedTemplate: QuickTemplate) {
   try {
     await fetch(`${API_BASE}/api/quick-templates/${updatedTemplate.key}`, {
-      method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(updatedTemplate),
-    });
+  method: "PUT",
+  headers: getAdminHeaders({
+    "Content-Type": "application/json",
+  }),
+  body: JSON.stringify(updatedTemplate),
+});
 
     await reloadQuickTemplatesFromBackend();
     setEditingQuickTemplateKey(null);
@@ -3420,11 +3421,11 @@ async function setTechManual(name: string, nextStatus: TechStatus) {
   const changed = updated.find((t) => t.name === name);
   if (changed) {
     fetchWithTimeout(`${API_BASE}/api/techs/${encodeURIComponent(name)}`, {
-      method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
+  method: "PUT",
+  headers: getAdminHeaders({
+    "Content-Type": "application/json",
+  }),
+  body: JSON.stringify({
         status: changed.status,
         blocked: changed.blocked,
         currentJobId: changed.currentJobId,
