@@ -2,6 +2,9 @@ import React, { useEffect, useMemo, useState } from "react";
 import AgendaView from "./components/AgendaView";
 import type { ScheduledJob } from "./components/AgendaView";
 import {
+  createLinkedJobGroup,
+} from "./modules/linkedJobs";
+import {
   AlertTriangle,
   Car,
   CheckCircle2,
@@ -22,7 +25,7 @@ type TechStatus =
   | "nodisponible"
   | "supervisor";
 type AreaKey = "camion" | "movil" | "tacografo" | "turismo" | "mecanica";
-type JobStatus = "espera" | "activo" | "parado" | "cerrado";
+type JobStatus = "espera" | "activo" | "parado" | "cerrado" | "bloqueado";
 type TemplateKey = "alineacion_camion" | "pinchazo_camion";
 type QuickEntryMode = "single" | "team";
 type CompetencyKey = AreaKey | TemplateKey;
@@ -36,6 +39,13 @@ type QuickTemplate = {
   allowedTechs: string[];
   priorityOrder: string[];
   standardMinutes?: number | null;
+};
+
+type LinkedTemplate = {
+  id: string;
+  label: string;
+  firstTemplateKey: string;
+  secondTemplateKey: string;
 };
 
 type RoleCapability = {
@@ -82,6 +92,12 @@ type Job = {
   workedAccumulatedMinutes?: number | null;
   pausedAccumulatedMinutes?: number | null;
   pausedAtMs?: number | null;
+  linkedGroupId?: string | null;
+  dependsOnJobId?: number | null;
+  blockedReason?: string | null;
+  linkedOrder?: 1 | 2 | null;
+  blockedByJobId?: number | null;
+  
 };
 
 type AllocationResult = {
@@ -1601,7 +1617,63 @@ const isSupervisor = userRole === "admin" || userRole === "supervisor";
     template: "",
   });
 
-  const [quickTemplates, setQuickTemplates] = useState<QuickTemplate[]>([]);
+const [quickTemplates, setQuickTemplates] = useState<QuickTemplate[]>([]);
+
+const [linkedTemplates, setLinkedTemplates] = useState<LinkedTemplate[]>(() => {
+  try {
+    if (typeof window === "undefined") return [];
+
+    const saved = window.localStorage.getItem("linkedTemplates");
+    return saved ? JSON.parse(saved) : [];
+  } catch {
+    return [];
+  }
+});
+
+const [linkedTemplateDraft, setLinkedTemplateDraft] = useState<{
+  label: string;
+  firstTemplateKey: string;
+  secondTemplateKey: string;
+}>({
+  label: "",
+  firstTemplateKey: "",
+  secondTemplateKey: "",
+});
+
+useEffect(() => {
+  try {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(
+        "linkedTemplates",
+        JSON.stringify(linkedTemplates)
+      );
+    }
+  } catch {}
+}, [linkedTemplates]);
+
+useEffect(() => {
+  if (quickTemplates.length === 0) return;
+
+  setLinkedTemplateDraft((prev) => {
+    const firstExists = quickTemplates.some(
+      (template) => template.key === prev.firstTemplateKey
+    );
+
+    const secondExists = quickTemplates.some(
+      (template) => template.key === prev.secondTemplateKey
+    );
+
+    return {
+      ...prev,
+      firstTemplateKey: firstExists
+        ? prev.firstTemplateKey
+        : quickTemplates[0]?.key ?? "",
+      secondTemplateKey: secondExists
+        ? prev.secondTemplateKey
+        : quickTemplates[1]?.key ?? quickTemplates[0]?.key ?? "",
+    };
+  });
+}, [quickTemplates]);
 
 const [quickDraft, setQuickDraft] = useState<{
   templateKey: string;
@@ -1926,14 +1998,21 @@ useEffect(() => {
     [activeJobs]
   );
 
-  const pausedJobs = useMemo(
+const pausedJobs = useMemo(
   () =>
     [...activeJobs]
-      .filter((job) => job.status === "parado")
+      .filter((job) => job.status === "parado" && !job.dependsOnJobId)
       .sort((a, b) => b.createdAtMs - a.createdAtMs),
   [activeJobs]
 );
 
+const blockedJobs = useMemo(
+  () =>
+    [...activeJobs]
+      .filter((job) => job.status === "parado" && !!job.dependsOnJobId)
+      .sort((a, b) => a.createdAtMs - b.createdAtMs),
+  [activeJobs]
+);
   const operationReport = useMemo<OperationSummary[]>(() => {
     const bucket = new Map<
       string,
@@ -2052,7 +2131,6 @@ const techLoadStats = useMemo<TechLoadStat[]>(() => {
 useEffect(() => {
   console.log("SELF TESTS:", runSelfTests(techStats, techLoadStats));
 }, [techStats, techLoadStats]);
-
 useEffect(() => {
   if (!scheduledJobsLoaded) return;
 
@@ -2584,13 +2662,17 @@ async function reloadJobsFromBackend() {
 
 async function saveJobToBackend(job: Job) {
   try {
-    await fetchWithTimeout(`${API_BASE}/api/jobs`, {
-  method: "POST",
-  headers: getAdminHeaders({
-    "Content-Type": "application/json",
-  }),
-  body: JSON.stringify(job),
-});
+    const response = await fetchWithTimeout(`${API_BASE}/api/jobs`, {
+      method: "POST",
+      headers: getAdminHeaders({
+        "Content-Type": "application/json",
+      }),
+      body: JSON.stringify(job),
+    });
+
+    if (!response.ok) {
+      throw new Error("No se pudo guardar el trabajo");
+    }
   } catch (error) {
     console.error("Error guardando trabajo:", error);
     appendLog(`Error guardando trabajo ${job.plate}.`);
@@ -2843,34 +2925,97 @@ function cancelScheduledJob(id: number) {
 async function confirmScheduledArrival(scheduled: ScheduledJob) {
   if (scheduled.status !== "programado") return;
 
-  const template = quickTemplates.find(
-    (item) => item.key === scheduled.templateKey
+  const isLinkedJob =
+    !!scheduled.firstTemplateKey &&
+    !!scheduled.secondTemplateKey &&
+    !!scheduled.linkedTemplateLabel;
+
+  const firstTemplateKey = isLinkedJob
+    ? scheduled.firstTemplateKey
+    : scheduled.templateKey;
+
+  const firstTemplate = quickTemplates.find(
+    (item) => item.key === firstTemplateKey
   );
 
-  if (!template) return;
+  if (!firstTemplate) return;
 
-  const baseJob: Job = {
+  const createdAt = nowMs();
+
+  const linkedGroupId = isLinkedJob
+    ? `linked-${scheduled.id}-${createdAt}`
+    : null;
+
+  const firstJob: Job = {
     id: nextJobId,
-    area: scheduled.area,
+    area: firstTemplate.area,
     plate: scheduled.plate.trim().toUpperCase(),
     urgent: scheduled.urgent,
     status: "espera",
     assignedNames: [],
-    reason: `Llegada confirmada desde agenda: ${
-      scheduled.customerName || "cliente"
-    }`,
-    createdAtMs: nowMs(),
+    reason: isLinkedJob
+      ? `Trabajo combinado iniciado desde agenda: ${scheduled.linkedTemplateLabel}`
+      : `Llegada confirmada desde agenda: ${
+          scheduled.customerName || "cliente"
+        }`,
+    createdAtMs: createdAt,
     startedAtMs: null,
-    template: isBuiltInTemplateKey(template.key) ? template.key : null,
-    quickEntryLabel: template.label,
-    quickEntryMode: template.mode,
+    template: isBuiltInTemplateKey(firstTemplate.key) ? firstTemplate.key : null,
+    quickEntryLabel: firstTemplate.label,
+    quickEntryMode: firstTemplate.mode,
+
+    linkedGroupId,
+    linkedOrder: isLinkedJob ? 1 : null,
+    dependsOnJobId: null,
+    blockedReason: null,
   };
 
-  const result = allocateJob(baseJob, techs, [baseJob, ...jobs], true, true);
+  const result = allocateJob(firstJob, techs, [firstJob, ...jobs], true, true);
 
-  setJobs(result.jobs);
+  let jobsToSet = result.jobs;
+  let jobsToSave: Job[] = [
+    result.jobs.find((item) => item.id === firstJob.id) ?? firstJob,
+  ];
+
+  if (isLinkedJob) {
+    const secondTemplate = quickTemplates.find(
+      (item) => item.key === scheduled.secondTemplateKey
+    );
+
+    if (secondTemplate) {
+      const secondJob: Job = {
+        id: nextJobId + 1,
+        area: secondTemplate.area,
+        plate: scheduled.plate.trim().toUpperCase(),
+        urgent: scheduled.urgent,
+        status: "parado",
+        assignedNames: [],
+        reason: `Pendiente del trabajo anterior: ${firstTemplate.label}. Trabajo combinado: ${scheduled.linkedTemplateLabel}`,
+        createdAtMs: createdAt + 1,
+        startedAtMs: null,
+        pausedAtMs: nowMs(),
+        workedAccumulatedMinutes: 0,
+        pausedAccumulatedMinutes: 0,
+        template: isBuiltInTemplateKey(secondTemplate.key)
+          ? secondTemplate.key
+          : null,
+        quickEntryLabel: secondTemplate.label,
+        quickEntryMode: secondTemplate.mode,
+
+        linkedGroupId,
+        linkedOrder: 2,
+        dependsOnJobId: firstJob.id,
+        blockedReason: `Pendiente de finalizar ${firstTemplate.label}.`,
+      };
+
+      jobsToSet = [secondJob, ...result.jobs];
+      jobsToSave = [...jobsToSave, secondJob];
+    }
+  }
+
+  setJobs(jobsToSet);
   setTechs(result.techs);
-  setNextJobId((v) => v + 1);
+  setNextJobId((value) => value + jobsToSave.length);
 
   setScheduledJobs((prev) =>
     prev.map((item) =>
@@ -2879,23 +3024,26 @@ async function confirmScheduledArrival(scheduled: ScheduledJob) {
             ...item,
             status: result.assigned ? "activo" : "en_cola",
             arrivedAtMs: nowMs(),
-            jobId: baseJob.id,
+            jobId: firstJob.id,
           }
         : item
     )
   );
 
   try {
-    const finalJob =
-      result.jobs.find((job) => job.id === baseJob.id) ?? baseJob;
-
-    await saveJobToBackend(finalJob);
+    for (const job of jobsToSave) {
+      await saveJobToBackend(job);
+    }
 
     for (const tech of result.techs) {
       saveTechToBackend(tech);
     }
 
-    recalcWaitingQueue(result.techs, result.jobs);
+    appendLog(
+      isLinkedJob
+        ? `Llegada confirmada: ${scheduled.plate} · ${scheduled.linkedTemplateLabel}. Segundo trabajo bloqueado hasta finalizar el primero.`
+        : `Llegada confirmada: ${scheduled.plate}.`
+    );
   } catch (error) {
     console.error("Error confirmando llegada:", error);
     appendLog(`Error al confirmar llegada de ${scheduled.plate}.`);
@@ -2934,7 +3082,7 @@ const supported = assignAsSupportIfPossible(
   setFormOpen(false);
 
   try {
-    await fetchWithTimeout(`${API_BASE}/api/jobs`, {
+   await fetchWithTimeout(`${API_BASE}/api/jobs`, {
   method: "POST",
   headers: getAdminHeaders({
     "Content-Type": "application/json",
@@ -2950,6 +3098,160 @@ const supported = assignAsSupportIfPossible(
     recalcWaitingQueue(supported.techs, supported.jobs);
   } catch (error) {
     console.error("Error guardando trabajo:", error);
+  }
+}
+
+
+function addLinkedTemplate() {
+  const firstTemplate = quickTemplates.find(
+    (template) => template.key === linkedTemplateDraft.firstTemplateKey
+  );
+
+  const secondTemplate = quickTemplates.find(
+    (template) => template.key === linkedTemplateDraft.secondTemplateKey
+  );
+
+  if (!firstTemplate || !secondTemplate) {
+    alert("Selecciona los dos trabajos vinculados.");
+    return;
+  }
+
+  const defaultLabel = `${firstTemplate.label} → ${secondTemplate.label}`;
+  const label = linkedTemplateDraft.label.trim() || defaultLabel;
+
+  const template: LinkedTemplate = {
+    id: `linked-template-${Date.now()}`,
+    label,
+    firstTemplateKey: firstTemplate.key,
+    secondTemplateKey: secondTemplate.key,
+  };
+
+  setLinkedTemplates((prev) => [template, ...prev]);
+
+  setLinkedTemplateDraft((prev) => ({
+    ...prev,
+    label: "",
+  }));
+
+  appendLog(`Plantilla vinculada creada: ${label}.`);
+}
+
+function removeLinkedTemplate(id: string) {
+  const template = linkedTemplates.find((item) => item.id === id);
+
+  setLinkedTemplates((prev) => prev.filter((item) => item.id !== id));
+
+  if (template) {
+    appendLog(`Plantilla vinculada eliminada: ${template.label}.`);
+  }
+}
+
+async function createLinkedJobFromTemplate(linkedTemplate: LinkedTemplate) {
+  const firstTemplate = quickTemplates.find(
+    (template) => template.key === linkedTemplate.firstTemplateKey
+  );
+
+  const secondTemplate = quickTemplates.find(
+    (template) => template.key === linkedTemplate.secondTemplateKey
+  );
+
+  if (!firstTemplate || !secondTemplate) {
+    alert("No se encuentran las entradas rápidas de esta plantilla vinculada.");
+    return;
+  }
+
+  const plateInput = window.prompt(
+    `Matrícula para: ${linkedTemplate.label}`
+  );
+
+  if (!plateInput || !plateInput.trim()) return;
+
+  const plate = plateInput.trim().toUpperCase();
+
+  const urgent = window.confirm("¿Marcar este trabajo vinculado como urgente?");
+
+  const createdAtMs = nowMs();
+
+  const [firstJobBase, secondJobBase] = createLinkedJobGroup({
+  nextJobId,
+  plate,
+  urgent,
+  createdAtMs,
+
+  firstArea: firstTemplate.area,
+  secondArea: secondTemplate.area,
+
+  firstLabel: firstTemplate.label,
+  secondLabel: secondTemplate.label,
+
+  firstTemplate: isBuiltInTemplateKey(firstTemplate.key)
+    ? firstTemplate.key
+    : null,
+  secondTemplate: isBuiltInTemplateKey(secondTemplate.key)
+    ? secondTemplate.key
+    : null,
+
+  firstMode: firstTemplate.mode,
+  secondMode: secondTemplate.mode,
+});
+
+const linkedFirstJob: Job = {
+  ...firstJobBase,
+  status: firstJobBase.status as JobStatus,
+  dependsOnJobId: null,
+  blockedReason: null,
+  linkedOrder: 1,
+};
+
+const linkedSecondJob: Job = {
+  ...secondJobBase,
+  status: "parado" as JobStatus,
+  assignedNames: [],
+  startedAtMs: null,
+  pausedAtMs: nowMs(),
+  workedAccumulatedMinutes: 0,
+  pausedAccumulatedMinutes: 0,
+  dependsOnJobId: linkedFirstJob.id,
+  blockedReason: `Pendiente de finalizar ${firstTemplate.label}.`,
+  linkedOrder: 2,
+};
+
+  const firstJob = linkedFirstJob as Job;
+  const secondJob = linkedSecondJob as Job;
+
+  const result = allocateJob(
+    firstJob,
+    techs,
+    [firstJob, secondJob, ...jobs],
+    true,
+    true
+  );
+
+  const finalJobs = result.jobs;
+
+  setJobs(finalJobs);
+  setTechs(result.techs);
+  setNextJobId((value) => value + 2);
+
+  appendLog(
+    `Trabajo vinculado creado para ${plate}: ${firstTemplate.label} → ${secondTemplate.label}.`
+  );
+
+  try {
+    for (const job of finalJobs) {
+      if (job.id === firstJob.id || job.id === secondJob.id) {
+        await saveJobToBackend(job);
+      }
+    }
+
+    for (const tech of result.techs) {
+      saveTechToBackend(tech);
+    }
+
+    recalcWaitingQueue(result.techs, finalJobs);
+  } catch (error) {
+    console.error("Error creando trabajo vinculado:", error);
+    appendLog(`Error creando trabajo vinculado para ${plate}.`);
   }
 }
 
@@ -3117,7 +3419,7 @@ async function deleteWaitingJob(jobId: number) {
   appendLog(`Trabajo en cola eliminado: ${target.plate}.`);
 
   try {
-    await fetch(`${API_BASE}/api/jobs/${jobId}`, {
+await fetch(`${API_BASE}/api/jobs/${jobId}`, {
   method: "DELETE",
   headers: getAdminHeaders(),
 });
@@ -3306,7 +3608,7 @@ async function assignWaitingJobManually(jobId: number, techName: string) {
 }
 
 async function finishJob(jobId: number) {
-  const target = jobs.find((j) => j.id === jobId);
+  const target = jobs.find((job) => job.id === jobId);
   if (!target) return;
 
   const assignedNames = Array.isArray(target.assignedNames)
@@ -3328,22 +3630,66 @@ async function finishJob(jobId: number) {
     pausedAtMs: null,
   };
 
-  const updatedJobs = jobs.map((job) =>
+  const jobsAfterClose: Job[] = jobs.map((job) =>
     job.id === jobId ? closedJob : job
   );
 
-  const freedTechs: Tech[] = techs.map((t) =>
-    assignedNames.includes(t.name)
+  const freedTechs: Tech[] = techs.map((tech) =>
+    assignedNames.includes(tech.name)
       ? {
-          ...t,
-          status: (t.name === "Ramón" ? "supervisor" : "disponible") as TechStatus,
+          ...tech,
+          status: (tech.name === "Ramón"
+            ? "supervisor"
+            : "disponible") as TechStatus,
           currentJobId: null,
         }
-      : t
+      : tech
   );
 
-  setJobs(updatedJobs);
-  setTechs(freedTechs);
+  const linkedJobToReactivate = jobsAfterClose.find(
+    (job) => job.status === "parado" && job.dependsOnJobId === jobId
+  );
+
+  let finalJobs: Job[] = jobsAfterClose;
+  let finalTechs: Tech[] = freedTechs;
+  let reactivatedLinkedJob: Job | null = null;
+
+  if (linkedJobToReactivate) {
+    const reopenedLinkedJob: Job = {
+      ...linkedJobToReactivate,
+      status: "espera",
+      assignedNames: [],
+      startedAtMs: null,
+      pausedAtMs: null,
+      dependsOnJobId: null,
+      blockedReason: null,
+      reason: `Trabajo combinado desbloqueado tras finalizar ${getOperationLabel(
+        target
+      )}.`,
+    };
+
+    const jobsWithReopened = jobsAfterClose.map((job) =>
+      job.id === reopenedLinkedJob.id ? reopenedLinkedJob : job
+    );
+
+    const result = allocateJob(
+      reopenedLinkedJob,
+      freedTechs,
+      jobsWithReopened,
+      true,
+      true
+    );
+
+    finalJobs = result.jobs;
+    finalTechs = result.techs;
+
+    reactivatedLinkedJob =
+      result.jobs.find((job) => job.id === reopenedLinkedJob.id) ??
+      reopenedLinkedJob;
+  }
+
+  setJobs(finalJobs);
+  setTechs(finalTechs);
 
   appendLog(
     `Trabajo ${target.plate} finalizado. Trabajado: ${formatMinutes(
@@ -3351,13 +3697,21 @@ async function finishJob(jobId: number) {
     )}. Parado: ${formatMinutes(pausedMinutes)}.`
   );
 
+  if (reactivatedLinkedJob) {
+    appendLog(
+      `Trabajo combinado desbloqueado: ${
+        reactivatedLinkedJob.plate
+      } · ${getOperationLabel(reactivatedLinkedJob)}.`
+    );
+  }
+
   try {
     await fetch(`${API_BASE}/api/jobs/${jobId}/finish`, {
-  method: "POST",
-  headers: getAdminHeaders({
-    "Content-Type": "application/json",
-  }),
-  body: JSON.stringify({
+      method: "POST",
+      headers: getAdminHeaders({
+        "Content-Type": "application/json",
+      }),
+      body: JSON.stringify({
         closedAtMs,
         actualMinutes,
         workedAccumulatedMinutes: actualMinutes,
@@ -3365,12 +3719,16 @@ async function finishJob(jobId: number) {
       }),
     });
 
-    for (const tech of freedTechs) {
+    if (reactivatedLinkedJob) {
+      await saveJobToBackend(reactivatedLinkedJob);
+    }
+
+    for (const tech of finalTechs) {
       saveTechToBackend(tech);
     }
 
     await reloadJobsFromBackend();
-    recalcWaitingQueue(freedTechs, updatedJobs);
+    recalcWaitingQueue(finalTechs, finalJobs);
   } catch (error) {
     console.error("Error cerrando trabajo:", error);
     setJobs(jobs);
@@ -3806,6 +4164,7 @@ if (view === "agenda") {
       scheduledJobs={scheduledJobs}
       setScheduledJobs={setScheduledJobs}
       quickTemplates={quickTemplates}
+      linkedTemplates={linkedTemplates}
       AREA_META={AREA_META}
       onBack={() => setView("operativo")}
       appendLog={appendLog}
@@ -4334,6 +4693,160 @@ setIsAuthenticated(false);
       Agrupadas por tipo de trabajo
     </div>
   </div>
+{linkedTemplates.length > 0 && (
+  <div className="mt-5 rounded-2xl border border-violet-200 bg-violet-50 p-3">
+    <div className="mb-2 flex items-center justify-between gap-3">
+      <div className="text-sm font-semibold text-violet-900">
+        Trabajos vinculados
+      </div>
+
+      <span className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] uppercase text-violet-600">
+        {linkedTemplates.length} vinculadas
+      </span>
+    </div>
+
+    <div className="flex flex-wrap gap-2">
+      {linkedTemplates.map((template) => (
+        <div
+          key={template.id}
+          className="flex items-center gap-2 rounded-2xl border border-violet-200 bg-white px-3 py-2 text-slate-800 shadow-sm"
+        >
+          <button
+            type="button"
+            onClick={() => createLinkedJobFromTemplate(template)}
+            className="text-sm font-medium text-violet-900 hover:underline"
+          >
+            + {template.label}
+          </button>
+
+          <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] uppercase text-violet-600">
+            vinculado
+          </span>
+
+          {view === "ajustes" && (
+            <button
+              type="button"
+              onClick={() => removeLinkedTemplate(template.id)}
+              className="text-xs text-red-600 hover:text-red-700"
+            >
+              Eliminar
+            </button>
+          )}
+        </div>
+      ))}
+    </div>
+  </div>
+)}
+  {view === "ajustes" && (
+  <div className="mb-5 rounded-2xl border border-violet-200 bg-violet-50 p-4">
+    <div className="mb-3">
+      <div className="text-sm font-semibold text-violet-900">
+        Crear plantilla vinculada
+      </div>
+      <div className="mt-1 text-xs text-violet-700">
+        Crea una entrada rápida compuesta: el segundo trabajo queda bloqueado hasta finalizar el primero.
+      </div>
+    </div>
+
+    <div className="grid gap-3 md:grid-cols-2">
+      <div>
+        <label className="mb-1 block text-xs font-medium text-violet-700">
+          1º trabajo
+        </label>
+
+        <select
+          value={linkedTemplateDraft.firstTemplateKey}
+          onChange={(e) =>
+            setLinkedTemplateDraft((prev) => ({
+              ...prev,
+              firstTemplateKey: e.target.value,
+            }))
+          }
+          className="w-full rounded-xl border border-violet-200 bg-white px-3 py-2 text-sm"
+        >
+          {quickTemplates.map((template) => (
+            <option key={template.key} value={template.key}>
+              {template.label}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div>
+        <label className="mb-1 block text-xs font-medium text-violet-700">
+          2º trabajo bloqueado
+        </label>
+
+        <select
+          value={linkedTemplateDraft.secondTemplateKey}
+          onChange={(e) =>
+            setLinkedTemplateDraft((prev) => ({
+              ...prev,
+              secondTemplateKey: e.target.value,
+            }))
+          }
+          className="w-full rounded-xl border border-violet-200 bg-white px-3 py-2 text-sm"
+        >
+          {quickTemplates.map((template) => (
+            <option key={template.key} value={template.key}>
+              {template.label}
+            </option>
+          ))}
+        </select>
+      </div>
+    </div>
+
+    <div className="mt-3 grid gap-3 md:grid-cols-[1fr_auto]">
+      <input
+        value={linkedTemplateDraft.label}
+        onChange={(e) =>
+          setLinkedTemplateDraft((prev) => ({
+            ...prev,
+            label: e.target.value,
+          }))
+        }
+        placeholder="Nombre opcional. Ej: Neumáticos dirección → Alineación"
+        className="rounded-xl border border-violet-200 bg-white px-3 py-2 text-sm"
+      />
+
+      <button
+        type="button"
+        onClick={addLinkedTemplate}
+        disabled={quickTemplates.length < 2}
+        className="rounded-xl bg-violet-700 px-4 py-2 text-sm font-medium text-white hover:bg-violet-800 disabled:opacity-40"
+      >
+        Guardar vinculada
+      </button>
+    </div>
+
+    {linkedTemplates.length > 0 && (
+      <div className="mt-4 space-y-2">
+        <div className="text-xs font-medium text-violet-700">
+          Plantillas vinculadas guardadas
+        </div>
+
+        {linkedTemplates.map((template) => (
+          <div
+            key={template.id}
+            className="flex items-center justify-between gap-3 rounded-xl border border-violet-200 bg-white px-3 py-2 text-sm"
+          >
+            <span className="font-medium text-violet-900">
+              {template.label}
+            </span>
+
+            <button
+              type="button"
+              onClick={() => removeLinkedTemplate(template.id)}
+              className="text-xs font-medium text-red-600 hover:text-red-700"
+            >
+              Eliminar
+            </button>
+          </div>
+        ))}
+      </div>
+    )}
+  </div>
+)}
 
   <div className="space-y-4">
     {Object.entries(AREA_META).map(([areaKey, areaMeta]) => {
@@ -5117,6 +5630,54 @@ setIsAuthenticated(false);
     </span>
   </div>
 
+  {blockedJobs.length > 0 && (
+  <section className="rounded-3xl border border-violet-200 bg-violet-50 p-5 shadow-sm">
+    <div className="mb-4 flex items-center justify-between">
+      <h2 className="text-lg font-semibold text-violet-900">
+        Trabajos vinculados bloqueados
+      </h2>
+
+      <span className="rounded-full bg-violet-100 px-2 py-1 text-xs font-medium text-violet-700">
+        {blockedJobs.length}
+      </span>
+    </div>
+
+    <div className="space-y-3">
+      {blockedJobs.map((job) => {
+        const previousJob = jobs.find(
+          (item) => item.id === job.dependsOnJobId
+        );
+
+        return (
+          <div
+            key={job.id}
+            className="rounded-2xl border border-violet-200 bg-white p-3"
+          >
+            <div className="font-semibold text-violet-900">
+              {job.plate}
+            </div>
+
+            <div className="mt-1 text-xs text-violet-700">
+              {getOperationLabel(job)}
+            </div>
+
+            <div className="mt-1 text-xs text-slate-500">
+              {job.blockedReason || "Pendiente de trabajo anterior."}
+            </div>
+
+            {previousJob && (
+              <div className="mt-2 rounded-xl border border-violet-100 bg-violet-50 px-3 py-2 text-xs text-violet-800">
+                Depende de: {getOperationLabel(previousJob)} ·{" "}
+                {previousJob.status}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  </section>
+)}
+
   <div className="space-y-3">
     {pausedJobs.length === 0 ? (
       <EmptyState
@@ -5316,64 +5877,6 @@ setIsAuthenticated(false);
           </section>
         </div>
       </div>
-
-      {pausedJobs.length > 0 && (
-  <section className="rounded-3xl border border-amber-200 bg-amber-50 p-5 shadow-sm">
-    <div className="mb-4 flex items-center justify-between">
-      <h2 className="text-lg font-semibold text-amber-900">
-        Trabajos parados
-      </h2>
-      <span className="text-xs text-amber-700">
-        Pendientes de reactivar
-      </span>
-    </div>
-
-    <div className="space-y-3">
-     {pausedJobs.map((job) => (
-  <div
-    key={job.id}
-    className="rounded-2xl border border-amber-200 bg-white p-3"
-  >
-    <div className="font-semibold text-amber-900">
-      {job.plate}
-    </div>
-
-    <div className="mt-1 text-xs text-amber-700">
-      {getOperationLabel(job)}
-    </div>
-
-    <div className="mt-1 text-xs text-slate-500">
-      {job.reason || "Trabajo parado temporalmente."}
-    </div>
-
-    {/* 👇 AQUÍ METES TODO JUNTO */}
-    <div className="mt-2 space-y-1 text-xs text-amber-700">
-      <div>
-        Trabajado:{" "}
-        <span className="font-medium">
-          {formatMinutes(getWorkedMinutes(job))}
-        </span>
-      </div>
-
-      <div>
-        Parado:{" "}
-        <span className="font-medium">
-          {formatMinutes(getPausedMinutes(job))}
-        </span>
-      </div>
-    </div>
-
-    <button
-      onClick={() => reactivatePausedJob(job.id)}
-      className="mt-3 rounded-xl bg-amber-600 px-3 py-2 text-sm font-medium text-white hover:bg-amber-700"
-    >
-      Reactivar
-    </button>
-  </div>
-))}
-    </div>
-  </section>
-)}
 
       {formOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">

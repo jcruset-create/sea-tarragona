@@ -7,7 +7,8 @@ type ScheduledJobStatus =
   | "en_cola"
   | "activo"
   | "cerrado"
-  | "cancelado";
+  | "cancelado"
+  | "llego";
 
 type QuickTemplate = {
   key: string;
@@ -34,6 +35,12 @@ export type ScheduledJob = {
   arrivedAtMs?: number | null;
   jobId?: number | null;
   googleEventId?: string | null;
+  linkedTemplateId?: string | null;
+  linkedTemplateLabel?: string | null;
+  firstTemplateKey?: string | null;
+  secondTemplateKey?: string | null;
+  createdAtMs?: number;
+  
 };
 
 type Props = {
@@ -45,6 +52,12 @@ type Props = {
   appendLog: (text: string) => void;
   confirmScheduledArrival: (scheduled: ScheduledJob) => void;
   cancelScheduledJob: (id: number) => void;
+    linkedTemplates?: {
+    id: string;
+    label: string;
+    firstTemplateKey: string;
+    secondTemplateKey: string;
+  }[];
 };
 
 const SLOT_MINUTES = 15;
@@ -94,29 +107,41 @@ function getWeekDays(weekOffset = 0) {
 }
 
 function getDayStart(dayIndex: number) {
-  return dayIndex === 5 ? 9 * 60 : 8 * 60 + 30;
+  // Sábado
+  if (dayIndex === 5) return 9 * 60;
+
+  // Lunes a viernes
+  return 8 * 60 + 30;
 }
 
 function getDayEnd(dayIndex: number) {
-  return dayIndex === 5 ? 13 * 60 : 19 * 60;
+  // Sábado
+  if (dayIndex === 5) return 13 * 60;
+
+  // Lunes a viernes
+  return 18 * 60 + 30;
 }
 
 function isWorkingTime(dayIndex: number, time: string) {
   const minutes = timeToMinutes(time);
 
+  // Sábado: 09:00 - 13:00
   if (dayIndex === 5) {
     return minutes >= 9 * 60 && minutes < 13 * 60;
   }
 
-  const morning = minutes >= 8 * 60 + 30 && minutes < 13 * 60;
-  const afternoon = minutes >= 15 * 60 && minutes < 19 * 60;
+  // Lunes a viernes:
+  // mañana 08:30 - 13:30
+  // tarde 15:00 - 18:30
+  const morning = minutes >= 8 * 60 + 30 && minutes < 13 * 60 + 30;
+  const afternoon = minutes >= 15 * 60 && minutes < 18 * 60 + 30;
 
   return morning || afternoon;
 }
 
 function getTimeSlotsForDay(dayIndex: number) {
-  const start = dayIndex === 5 ? 8 * 60 + 30 : getDayStart(dayIndex);
-  const end = 19 * 60;
+  const start = getDayStart(dayIndex);
+  const end = getDayEnd(dayIndex);
   const slots: string[] = [];
 
   for (let t = start; t < end; t += SLOT_MINUTES) {
@@ -300,6 +325,7 @@ export default function AgendaView({
   scheduledJobs,
   setScheduledJobs,
   quickTemplates,
+  linkedTemplates = [],
   AREA_META,
   onBack,
   appendLog,
@@ -325,6 +351,7 @@ const [selectedArea, setSelectedArea] = useState<AreaKey>("camion");
     customerPhone: "",
     urgent: false,
     estimatedMinutes: 45,
+    linkedTemplateKey: "",
   });
 
   const templatesForSelectedArea = quickTemplates.filter(
@@ -376,6 +403,7 @@ setSelectedArea(firstArea);
     customerPhone: "",
     urgent: false,
     estimatedMinutes: 45,
+    linkedTemplateKey: "",
   });
 
   setModalOpen(true);
@@ -410,6 +438,7 @@ setSelectedArea(firstTemplate?.area ?? "camion");
     customerPhone: "",
     urgent: false,
     estimatedMinutes: 45,
+    linkedTemplateKey: "",
   });
 
   setModalOpen(true);
@@ -425,6 +454,7 @@ function openEditAppointment(job: ScheduledJob) {
   });
 
   setDraft({
+    linkedTemplateKey: "",
     templateKey: job.templateKey,
     plate: job.plate,
     customerName: job.customerName,
@@ -439,30 +469,62 @@ function openEditAppointment(job: ScheduledJob) {
   setModalOpen(true);
 }
 
- function createScheduledJob() {
+function createScheduledJob() {
   if (!selectedSlot || !draft.templateKey || !draft.plate.trim()) return;
-if (isPastDateTime(selectedSlot.date, selectedSlot.startTime)) {
-  alert("No se puede guardar una cita en una fecha u hora pasada.");
-  return;
-}
 
-  const finalTemplateKey =
-  draft.templateKey || templatesForSelectedArea[0]?.key || "";
+  if (isPastDateTime(selectedSlot.date, selectedSlot.startTime)) {
+    alert("No se puede guardar una cita en una fecha u hora pasada.");
+    return;
+  }
 
-const template = quickTemplates.find((t) => t.key === finalTemplateKey);
-  if (!template) return;
+  const selectedLinkedTemplate = linkedTemplates.find(
+  (linked) =>
+    linked.firstTemplateKey === draft.templateKey &&
+    linked.secondTemplateKey === draft.linkedTemplateKey
+);
+
+  const finalTemplateKey = selectedLinkedTemplate
+    ? selectedLinkedTemplate.firstTemplateKey
+    : draft.templateKey || templatesForSelectedArea[0]?.key || "";
+
+  const template = quickTemplates.find((t) => t.key === finalTemplateKey);
+
+  if (!template) {
+    alert("No se encuentra la entrada rápida seleccionada.");
+    return;
+  }
 
   const nextData = {
     date: selectedSlot.date,
     startTime: selectedSlot.startTime,
     endTime: addMinutesToTime(selectedSlot.startTime, draft.estimatedMinutes),
+
     templateKey: template.key,
     area: template.area,
+
+    linkedTemplateId: selectedLinkedTemplate?.id ?? null,
+    linkedTemplateLabel: selectedLinkedTemplate?.label ?? null,
+    firstTemplateKey: selectedLinkedTemplate?.firstTemplateKey ?? null,
+    secondTemplateKey: selectedLinkedTemplate?.secondTemplateKey ?? null,
+
     plate: draft.plate.trim().toUpperCase(),
     customerName: draft.customerName.trim(),
     customerPhone: draft.customerPhone.trim(),
     urgent: draft.urgent,
+    estimatedMinutes: draft.estimatedMinutes,
   };
+
+  console.log("AGENDA nextData resumen", {
+  templateKey: nextData.templateKey,
+  linkedTemplateId: nextData.linkedTemplateId,
+  linkedTemplateLabel: nextData.linkedTemplateLabel,
+  firstTemplateKey: nextData.firstTemplateKey,
+  secondTemplateKey: nextData.secondTemplateKey,
+});
+
+  const logLabel = selectedLinkedTemplate
+    ? selectedLinkedTemplate.label
+    : template.label;
 
   if (editingJobId != null) {
     setScheduledJobs((prev) =>
@@ -476,17 +538,18 @@ const template = quickTemplates.find((t) => t.key === finalTemplateKey);
       )
     );
 
-    appendLog(`Cita editada: ${nextData.plate} · ${template.label}.`);
+    appendLog(`Cita editada: ${nextData.plate} · ${logLabel}.`);
   } else {
     const scheduled: ScheduledJob = {
       id: Date.now(),
       ...nextData,
       status: "programado",
       assignedTech: null,
+      createdAtMs: Date.now(),
     };
 
     setScheduledJobs((prev) => [...prev, scheduled]);
-    appendLog(`Cita programada: ${scheduled.plate} · ${template.label}.`);
+    appendLog(`Cita programada: ${scheduled.plate} · ${logLabel}.`);
   }
 
   setDraft({
@@ -496,6 +559,7 @@ const template = quickTemplates.find((t) => t.key === finalTemplateKey);
     customerPhone: "",
     urgent: false,
     estimatedMinutes: 45,
+    linkedTemplateKey: "",
   });
 
   setEditingJobId(null);
@@ -681,14 +745,24 @@ const dayJobs = scheduledJobs
 
   return (
     <div
-      key={`${day.date}-${slot}`}
-      style={{ height: SLOT_HEIGHT }}
-      onClick={() => {
-        if (disabled) return;
-        openNewAppointment(day.date, slot);
-      }}
-      className={`border-b border-slate-100 ${cellClass}`}
-    />
+  key={`${day.date}-${slot}`}
+  style={{ height: SLOT_HEIGHT }}
+  onClick={() => {
+    if (disabled || !isWorkingTime(day.index, slot)) return;
+    openNewAppointment(day.date, slot);
+  }}
+  className={`relative border-b border-slate-100 ${
+    !isWorkingTime(day.index, slot)
+      ? "cursor-not-allowed bg-slate-200"
+      : cellClass
+  }`}
+>
+  {!isWorkingTime(day.index, slot) && (
+    <div className="flex h-full items-center justify-center text-[10px] font-medium uppercase tracking-wide text-slate-500">
+      Cerrado
+    </div>
+  )}
+</div>
   );
 })}
 
@@ -748,7 +822,7 @@ const dayJobs = scheduledJobs
       }}
     >
       <div className="truncate uppercase">
-        {template?.label ?? "Operación"}
+        {job.linkedTemplateLabel || template?.label || "Operación"}
       </div>
 
       <div className="truncate">
@@ -815,7 +889,7 @@ const dayJobs = scheduledJobs
               </div>
 
               <div className="mt-1 text-xs text-slate-600">
-                {template?.label ?? "Operación"}
+                {job.linkedTemplateLabel || template?.label || "Operación"}
               </div>
 
               <div className="mt-1 text-xs text-slate-500">
@@ -927,18 +1001,19 @@ const dayJobs = scheduledJobs
 
       return (
         <button
-          key={area}
-          type="button"
-          onClick={() => {
-            const firstTemplate = areaTemplates[0];
+  key={area}
+  type="button"
+  onClick={() => {
+    const firstTemplate = areaTemplates[0];
 
-            setSelectedArea(area);
+    setSelectedArea(area);
 
-            setDraft((prev) => ({
-              ...prev,
-              templateKey: firstTemplate?.key ?? "",
-            }));
-          }}
+    setDraft((prev) => ({
+      ...prev,
+      area,
+      templateKey: firstTemplate?.key ?? "",
+    }));
+  }}
           className={`rounded-2xl border px-2 py-2 text-xs font-semibold transition ${meta.color} ${
             active
               ? "ring-2 ring-slate-900 ring-offset-2"
@@ -954,26 +1029,56 @@ const dayJobs = scheduledJobs
   )}
 </div>
 
-  <select
-    value={draft.templateKey || templatesForSelectedArea[0]?.key || ""}
-    onChange={(e) =>
-      setDraft((prev) => ({
-        ...prev,
-        templateKey: e.target.value,
-      }))
-    }
-    className="w-full rounded-2xl border border-slate-200 px-3 py-3"
-  >
-    {templatesForSelectedArea.length === 0 ? (
-      <option value="">No hay entradas en este bloque</option>
-    ) : (
-      templatesForSelectedArea.map((template) => (
+ <select
+  value={
+    draft.linkedTemplateKey
+      ? `${draft.templateKey}|||${draft.linkedTemplateKey}`
+      : draft.templateKey
+  }
+  onChange={(e) => {
+    const [templateKey, linkedTemplateKey] = e.target.value.split("|||");
+     console.log("SELECT AGENDA", {
+    rawValue: e.target.value,
+    templateKey,
+    linkedTemplateKey,
+  });
+    setDraft((prev) => ({
+      ...prev,
+      templateKey,
+      linkedTemplateKey: linkedTemplateKey || "",
+    }));
+  }}
+  className="w-full rounded-2xl border border-slate-200 px-3 py-3"
+>
+  <optgroup label="Trabajos vinculados">
+    {linkedTemplates
+      .filter((linked) => {
+        const firstTemplate = quickTemplates.find(
+          (template) => template.key === linked.firstTemplateKey
+        );
+
+        return firstTemplate?.area === selectedArea;
+      })
+      .map((linked) => (
+        <option
+          key={linked.id}
+          value={`${linked.firstTemplateKey}|||${linked.secondTemplateKey}`}
+        >
+          {linked.label}
+        </option>
+      ))}
+  </optgroup>
+
+  <optgroup label="Entradas rápidas">
+    {quickTemplates
+      .filter((template) => template.area === selectedArea)
+      .map((template) => (
         <option key={template.key} value={template.key}>
           {template.label}
         </option>
-      ))
-    )}
-  </select>
+      ))}
+  </optgroup>
+</select>
 </div>
 
                 <input
@@ -1062,6 +1167,7 @@ const dayJobs = scheduledJobs
       customerPhone: "",
       urgent: false,
       estimatedMinutes: 45,
+      linkedTemplateKey: "",
     });
   }}
   className="flex-1 rounded-2xl border border-slate-200 px-4 py-3 text-sm font-medium"
