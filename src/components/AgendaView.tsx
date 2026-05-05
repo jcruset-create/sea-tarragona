@@ -115,33 +115,33 @@ function getDayStart(dayIndex: number) {
 }
 
 function getDayEnd(dayIndex: number) {
-  // Sábado
-  if (dayIndex === 5) return 13 * 60;
+  // Sábado: así aparece también el bloque de las 13:00
+  if (dayIndex === 5) return 13 * 60 + 15;
 
-  // Lunes a viernes
-  return 18 * 60 + 30;
+  // Lunes a viernes: así aparece también el bloque de las 18:30
+  return 18 * 60 + 45;
 }
 
 function isWorkingTime(dayIndex: number, time: string) {
   const minutes = timeToMinutes(time);
 
-  // Sábado: 09:00 - 13:00
+  // Sábado: 09:00 - 13:00 (incluyendo 13:00)
   if (dayIndex === 5) {
-    return minutes >= 9 * 60 && minutes < 13 * 60;
+    return minutes >= 9 * 60 && minutes <= 13 * 60;
   }
 
   // Lunes a viernes:
-  // mañana 08:30 - 13:30
-  // tarde 15:00 - 18:30
-  const morning = minutes >= 8 * 60 + 30 && minutes < 13 * 60 + 30;
-  const afternoon = minutes >= 15 * 60 && minutes < 18 * 60 + 30;
+  // mañana 08:30 - 13:30 (incluyendo 13:30)
+  // tarde 15:00 - 18:30 (incluyendo 18:30)
+  const morning = minutes >= 8 * 60 + 30 && minutes <= 13 * 60 + 30;
+  const afternoon = minutes >= 15 * 60 && minutes <= 18 * 60 + 30;
 
   return morning || afternoon;
 }
 
-function getTimeSlotsForDay(_dayIndex: number) {
-  const start = 8 * 60 + 30;
-  const end = 18 * 60 + 30;
+function getTimeSlotsForDay(dayIndex: number) {
+  const start = getDayStart(dayIndex);
+  const end = getDayEnd(dayIndex);
   const slots: string[] = [];
 
   for (let t = start; t < end; t += SLOT_MINUTES) {
@@ -565,6 +565,58 @@ function createScheduledJob() {
   setSelectedSlot(null);
 }
 
+function deleteScheduledJob(id: number) {
+  const job = scheduledJobs.find((item) => item.id === id);
+  if (!job) return;
+
+  const ok = window.confirm(
+    `¿Eliminar definitivamente la cita ${job.plate} del ${job.date} a las ${job.startTime}?`
+  );
+
+  if (!ok) return;
+
+  setScheduledJobs((prev) => prev.filter((item) => item.id !== id));
+
+  appendLog(`Cita eliminada: ${job.plate} · ${job.date} · ${job.startTime}.`);
+}
+
+function cleanExpiredScheduledJobs() {
+  const now = new Date();
+  const nowKey = formatLocalDate(now);
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+
+  const expiredJobs = scheduledJobs.filter((job) => {
+    if (job.status === "cancelado") return true;
+    if (job.status === "cerrado") return true;
+
+    const jobDate = getScheduledDate(job);
+    const jobEndTime = getScheduledEndTime(job);
+    const jobEndMinutes = timeToMinutes(jobEndTime);
+
+    if (jobDate < nowKey) return true;
+    if (jobDate === nowKey && jobEndMinutes < nowMinutes) return true;
+
+    return false;
+  });
+
+  if (expiredJobs.length === 0) {
+    alert("No hay citas vencidas para limpiar.");
+    return;
+  }
+
+  const ok = window.confirm(
+    `Se eliminarán ${expiredJobs.length} citas vencidas/canceladas. ¿Continuar?`
+  );
+
+  if (!ok) return;
+
+  const expiredIds = new Set(expiredJobs.map((job) => job.id));
+
+  setScheduledJobs((prev) => prev.filter((job) => !expiredIds.has(job.id)));
+
+  appendLog(`Agenda limpiada: ${expiredJobs.length} citas vencidas eliminadas.`);
+}
+
   return (
   <div className="h-screen overflow-hidden bg-slate-50 p-3 text-slate-900">
   <div className="w-full space-y-4">
@@ -587,6 +639,13 @@ function createScheduledJob() {
   className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-medium text-white"
 >
   + Nueva cita
+</button>
+<button
+  type="button"
+  onClick={cleanExpiredScheduledJobs}
+  className="rounded-2xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-100"
+>
+  Limpiar vencidas
 </button>
 
             <button
@@ -753,12 +812,7 @@ const dayJobs = scheduledJobs
       : cellClass
   }`}
 >
-  {!isWorkingTime(day.index, slot) && (
-    <div className="flex h-full items-center justify-center text-[10px] font-medium uppercase tracking-wide text-slate-500">
-      Cerrado
-    </div>
-  )}
-</div>
+  </div>
   );
 })}
 
@@ -835,18 +889,31 @@ const dayJobs = scheduledJobs
         </div>
       )}
 
-    {job.status === "programado" && (
+<div className="absolute bottom-1 left-1 right-1 flex gap-1">
+  {job.status === "programado" && (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        cancelScheduledJob(job.id);
+      }}
+      className="flex-1 rounded-md bg-white/95 px-1 py-0.5 text-[9px] font-semibold text-red-600 shadow-sm"
+    >
+      Cancelar
+    </button>
+  )}
+
   <button
     type="button"
     onClick={(e) => {
       e.stopPropagation();
-      cancelScheduledJob(job.id);
+      deleteScheduledJob(job.id);
     }}
-    className="absolute bottom-1 left-1 right-1 rounded-md bg-white/95 px-1 py-0.5 text-[9px] font-semibold text-red-600 shadow-sm"
+    className="flex-1 rounded-md bg-white/95 px-1 py-0.5 text-[9px] font-semibold text-slate-700 shadow-sm"
   >
-    Cancelar
+    Eliminar
   </button>
-)}
+</div>
     </div>
   );
 })}
