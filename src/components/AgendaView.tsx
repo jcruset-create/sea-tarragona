@@ -61,7 +61,7 @@ type Props = {
 };
 
 const SLOT_MINUTES = 15;
-const SLOT_HEIGHT = 36;
+const SLOT_HEIGHT = 24;
 
 function timeToMinutes(time: string) {
   const [h, m] = time.split(":").map(Number);
@@ -139,9 +139,9 @@ function isWorkingTime(dayIndex: number, time: string) {
   return morning || afternoon;
 }
 
-function getTimeSlotsForDay(dayIndex: number) {
-  const start = getDayStart(dayIndex);
-  const end = getDayEnd(dayIndex);
+function getTimeSlotsForDay(_dayIndex: number) {
+  const start = 8 * 60 + 30;
+  const end = 18 * 60 + 30;
   const slots: string[] = [];
 
   for (let t = start; t < end; t += SLOT_MINUTES) {
@@ -370,9 +370,7 @@ const [selectedArea, setSelectedArea] = useState<AreaKey>("camion");
     ? [days[0]]
     : [];
   const todayKey = formatLocalDate(new Date());
-  const cancelledJobs: ScheduledJob[] = scheduledJobs.filter(
-  (job: ScheduledJob) => job.status === "cancelado"
-);
+ 
 function openNewAppointment(date: string, startTime: string) {
   const day = days.find((item) => item.date === date);
 
@@ -568,10 +566,9 @@ function createScheduledJob() {
 }
 
   return (
-    <div className="min-h-screen bg-slate-50 p-3 text-slate-900">
+  <div className="h-screen overflow-hidden bg-slate-50 p-3 text-slate-900">
   <div className="w-full space-y-4">
-        <div className="flex flex-col gap-4 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm md:flex-row md:items-center md:justify-between">
-          <div>
+<div className="sticky top-0 z-50 flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white/95 p-4 shadow-sm backdrop-blur md:flex-row md:items-center md:justify-between">          <div>
             <h1 className="text-2xl font-semibold">Agenda semanal</h1>
             <p className="text-sm text-slate-500">
               Vista tipo Calendar · lunes a sábado
@@ -657,12 +654,11 @@ function createScheduledJob() {
           </div>
         </div>
 
-<div className="w-full overflow-x-auto rounded-3xl border border-slate-200 bg-white shadow-sm">
-<div
-  className={`grid border-b border-slate-200 ${
+<div className="h-[calc(100vh-130px)] w-full overflow-auto rounded-2xl border border-slate-200 bg-white shadow-sm"><div
+  className={`sticky top-0 z-40 grid border-b border-slate-200 bg-white ${
     calendarMode === "day"
-      ? "min-w-[900px] grid-cols-[80px_1fr]"
-      : "min-w-[1250px] grid-cols-[80px_repeat(6,1fr)]"
+      ? "min-w-[900px] grid-cols-[70px_1fr]"
+      : "min-w-[1180px] grid-cols-[70px_repeat(6,1fr)]"
   }`}
 >
             <div className="p-3 text-xs font-medium text-slate-500">Hora</div>
@@ -680,8 +676,8 @@ function createScheduledJob() {
 <div
   className={`grid ${
     calendarMode === "day"
-      ? "min-w-[900px] grid-cols-[80px_1fr]"
-      : "min-w-[1250px] grid-cols-[80px_repeat(6,1fr)]"
+      ? "min-w-[900px] grid-cols-[70px_1fr]"
+      : "min-w-[1180px] grid-cols-[70px_repeat(6,1fr)]"
   }`}
 >
             <div>
@@ -698,8 +694,8 @@ function createScheduledJob() {
 
             {finalVisibleDays.map((day) => {
               const slots = getTimeSlotsForDay(day.index);
-              const dayStart = getDayStart(day.index);
-              const dayHeight = slots.length * SLOT_HEIGHT;
+const dayStart = 8 * 60 + 30;
+const dayHeight = slots.length * SLOT_HEIGHT;
 
 const dayJobs = scheduledJobs
   .filter((job) => job.status !== "cancelado")
@@ -860,51 +856,6 @@ const dayJobs = scheduledJobs
           </div>
         </div>
 
-{cancelledJobs.length > 0 && (
-  <div className="rounded-3xl border border-red-200 bg-red-50 p-4 shadow-sm">
-    <div className="mb-3 text-sm font-semibold text-red-800">
-      Historial de citas canceladas
-    </div>
-
-    <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-      {cancelledJobs
-        .slice()
-        .sort((a: ScheduledJob, b: ScheduledJob) => {
-          const dateA = `${a.date} ${a.startTime}`;
-          const dateB = `${b.date} ${b.startTime}`;
-          return dateB.localeCompare(dateA);
-        })
-        .map((job: ScheduledJob) => {
-          const template = quickTemplates.find(
-            (item) => item.key === job.templateKey
-          );
-
-          return (
-            <div
-              key={`cancelled-${job.id}`}
-              className="rounded-2xl border border-red-200 bg-white p-3 text-sm"
-            >
-              <div className="font-semibold text-red-800">
-                {job.plate} · {job.date} · {job.startTime}
-              </div>
-
-              <div className="mt-1 text-xs text-slate-600">
-                {job.linkedTemplateLabel || template?.label || "Operación"}
-              </div>
-
-              <div className="mt-1 text-xs text-slate-500">
-                {job.customerName || "Cliente sin nombre"}
-              </div>
-
-              <div className="mt-1 text-xs text-slate-500">
-                {job.customerPhone || "Sin teléfono"}
-              </div>
-            </div>
-          );
-        })}
-    </div>
-  </div>
-)}
 
         {modalOpen && selectedSlot && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">

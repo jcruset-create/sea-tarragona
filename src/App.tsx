@@ -2,9 +2,6 @@ import React, { useEffect, useMemo, useState } from "react";
 import AgendaView from "./components/AgendaView";
 import type { ScheduledJob } from "./components/AgendaView";
 import {
-  createLinkedJobGroup,
-} from "./modules/linkedJobs";
-import {
   AlertTriangle,
   Car,
   CheckCircle2,
@@ -23,7 +20,11 @@ type TechStatus =
   | "ocupado"
   | "refuerzo"
   | "nodisponible"
-  | "supervisor";
+  | "supervisor"
+  | "vacaciones"
+  | "baja"
+  | "permiso"
+  | "otro_taller";
 type AreaKey = "camion" | "movil" | "tacografo" | "turismo" | "mecanica";
 type JobStatus = "espera" | "activo" | "parado" | "cerrado" | "bloqueado";
 type TemplateKey = "alineacion_camion" | "pinchazo_camion";
@@ -66,6 +67,8 @@ type Tech = {
   competencies: Record<CompetencyKey, RoleCapability>;
   priorities: Record<AreaKey, RolePriority>;
   avatar?: string;
+  statusChangedAtMs?: number | null;
+statusTotals?: Partial<Record<TechStatus, number>>;
 };
 
 type SavedTechConfig = {
@@ -323,6 +326,114 @@ async function fetchWithTimeout(
 
 function nowMs(): number {
   return Date.now();
+}
+
+const UNAVAILABLE_TECH_STATUSES: TechStatus[] = [
+  "nodisponible",
+  "vacaciones",
+  "baja",
+  "permiso",
+  "otro_taller",
+];
+
+function isUnavailableTechStatus(status: TechStatus) {
+  return UNAVAILABLE_TECH_STATUSES.includes(status);
+}
+
+function getTechStatusLabel(status: TechStatus) {
+  if (status === "disponible") return "Disponible";
+  if (status === "ocupado") return "Ocupado";
+  if (status === "refuerzo") return "Refuerzo";
+  if (status === "nodisponible") return "No disponible";
+  if (status === "supervisor") return "Supervisor";
+  if (status === "vacaciones") return "Vacaciones";
+  if (status === "baja") return "Baja";
+  if (status === "permiso") return "Permiso";
+  if (status === "otro_taller") return "En otro taller";
+  return status;
+}
+
+function getTechStatusColor(status: TechStatus) {
+  if (status === "disponible" || status === "supervisor") {
+    return "bg-green-50 border-green-200 text-green-700";
+  }
+
+  if (status === "ocupado") {
+    return "bg-red-50 border-red-200 text-red-700";
+  }
+
+  if (status === "refuerzo") {
+    return "bg-amber-50 border-amber-200 text-amber-700";
+  }
+
+  if (status === "vacaciones") {
+    return "bg-sky-50 border-sky-200 text-sky-700";
+  }
+
+  if (status === "baja") {
+    return "bg-rose-50 border-rose-200 text-rose-700";
+  }
+
+  if (status === "permiso") {
+    return "bg-violet-50 border-violet-200 text-violet-700";
+  }
+
+  if (status === "otro_taller") {
+    return "bg-indigo-50 border-indigo-200 text-indigo-700";
+  }
+
+  return "bg-slate-50 border-slate-200 text-slate-700";
+}
+
+function updateTechStatusTotals(
+  tech: Tech,
+  nextStatus: TechStatus,
+  changedAtMs = nowMs()
+): Tech {
+  const previousChangedAtMs = tech.statusChangedAtMs ?? changedAtMs;
+  const elapsedMinutes = Math.max(
+    0,
+    Math.round((changedAtMs - previousChangedAtMs) / 60000)
+  );
+
+  const previousStatus = tech.status;
+  const previousTotals = tech.statusTotals ?? {};
+
+  return {
+    ...tech,
+    status: nextStatus,
+    blocked: isUnavailableTechStatus(nextStatus),
+    currentJobId:
+      nextStatus === "disponible" ||
+      nextStatus === "nodisponible" ||
+      nextStatus === "supervisor" ||
+      nextStatus === "vacaciones" ||
+      nextStatus === "baja" ||
+      nextStatus === "permiso" ||
+      nextStatus === "otro_taller"
+        ? null
+        : tech.currentJobId,
+    statusChangedAtMs: changedAtMs,
+    statusTotals: {
+      ...previousTotals,
+      [previousStatus]: (previousTotals[previousStatus] ?? 0) + elapsedMinutes,
+    },
+  };
+}
+
+function getTechMinutesInStatus(tech: Tech, status: TechStatus) {
+  const base = tech.statusTotals?.[status] ?? 0;
+
+  if (tech.status !== status || !tech.statusChangedAtMs) {
+    return base;
+  }
+
+  const current = Math.max(
+    0,
+    Math.round((nowMs() - tech.statusChangedAtMs) / 60000)
+  );
+
+  return base + current;
 }
 
 async function downloadBackup() {
@@ -609,9 +720,11 @@ function createTech(name: string, status: TechStatus = "disponible"): Tech {
     name,
     status,
     currentJobId: null,
-    blocked: false,
+    blocked: isUnavailableTechStatus(status),
     competencies: defaultCompetencies(name),
     priorities: defaultPriorities(name),
+    statusChangedAtMs: nowMs(),
+    statusTotals: {},
   };
 }
 
@@ -1259,9 +1372,18 @@ function syncTechsWithActiveJobs(baseTechs: Tech[], jobs: Job[]): Tech[] {
     );
 
     if (!activeJob) {
+      if (isUnavailableTechStatus(tech.status)) {
+        return {
+          ...tech,
+          blocked: true,
+          currentJobId: null,
+        };
+      }
+
       return {
         ...tech,
         status: tech.name === "Ramón" ? "supervisor" : "disponible",
+        blocked: false,
         currentJobId: null,
       };
     }
@@ -1271,6 +1393,7 @@ function syncTechsWithActiveJobs(baseTechs: Tech[], jobs: Job[]): Tech[] {
     return {
       ...tech,
       currentJobId: activeJob.id,
+      blocked: false,
       status:
         index === 0
           ? tech.name === "Ramón"
@@ -1677,10 +1800,12 @@ useEffect(() => {
 
 const [quickDraft, setQuickDraft] = useState<{
   templateKey: string;
+  linkedTemplateKey: string;
   plate: string;
   urgent: boolean;
 }>({
   templateKey: "",
+  linkedTemplateKey: "",
   plate: "",
   urgent: false,
 });
@@ -1998,10 +2123,22 @@ useEffect(() => {
     [activeJobs]
   );
 
+const isLinkedBlockedJob = (job: Job) => {
+  if (job.status !== "parado") return false;
+
+  return (
+    !!job.dependsOnJobId ||
+    !!job.blockedReason ||
+    job.linkedOrder === 2 ||
+    (job.reason || "").includes("Pendiente del trabajo anterior") ||
+    (job.reason || "").includes("Trabajo vinculado")
+  );
+};
+
 const pausedJobs = useMemo(
   () =>
     [...activeJobs]
-      .filter((job) => job.status === "parado" && !job.dependsOnJobId)
+      .filter((job) => job.status === "parado" && !isLinkedBlockedJob(job))
       .sort((a, b) => b.createdAtMs - a.createdAtMs),
   [activeJobs]
 );
@@ -2009,7 +2146,7 @@ const pausedJobs = useMemo(
 const blockedJobs = useMemo(
   () =>
     [...activeJobs]
-      .filter((job) => job.status === "parado" && !!job.dependsOnJobId)
+      .filter((job) => isLinkedBlockedJob(job))
       .sort((a, b) => a.createdAtMs - b.createdAtMs),
   [activeJobs]
 );
@@ -2711,6 +2848,8 @@ function saveTechToBackend(tech: Tech) {
       competencies: tech.competencies,
       priorities: tech.priorities,
       avatar: tech.avatar ?? null,
+      statusChangedAtMs: tech.statusChangedAtMs ?? null,
+      statusTotals: tech.statusTotals ?? {},
     }),
   }).catch((error) => {
     console.error("Error guardando técnico:", error);
@@ -3146,170 +3285,120 @@ function removeLinkedTemplate(id: string) {
   }
 }
 
-async function createLinkedJobFromTemplate(linkedTemplate: LinkedTemplate) {
+
+async function createTemplateEntry() {
   const firstTemplate = quickTemplates.find(
-    (template) => template.key === linkedTemplate.firstTemplateKey
+    (item) => item.key === quickDraft.templateKey
   );
 
-  const secondTemplate = quickTemplates.find(
-    (template) => template.key === linkedTemplate.secondTemplateKey
-  );
+  if (!firstTemplate || !quickDraft.plate.trim()) return;
 
-  if (!firstTemplate || !secondTemplate) {
-    alert("No se encuentran las entradas rápidas de esta plantilla vinculada.");
-    return;
-  }
+  const secondTemplate = quickDraft.linkedTemplateKey
+    ? quickTemplates.find((item) => item.key === quickDraft.linkedTemplateKey)
+    : null;
 
-  const plateInput = window.prompt(
-    `Matrícula para: ${linkedTemplate.label}`
-  );
+  const isLinkedEntry = !!secondTemplate;
 
-  if (!plateInput || !plateInput.trim()) return;
-
-  const plate = plateInput.trim().toUpperCase();
-
-  const urgent = window.confirm("¿Marcar este trabajo vinculado como urgente?");
-
+  const plate = quickDraft.plate.trim().toUpperCase();
   const createdAtMs = nowMs();
 
-  const [firstJobBase, secondJobBase] = createLinkedJobGroup({
-  nextJobId,
-  plate,
-  urgent,
-  createdAtMs,
+  const linkedGroupId = isLinkedEntry
+    ? `linked-quick-${Date.now()}`
+    : null;
 
-  firstArea: firstTemplate.area,
-  secondArea: secondTemplate.area,
+  const firstJob: Job = {
+    id: nextJobId,
+    area: firstTemplate.area,
+    plate,
+    urgent: quickDraft.urgent,
+    status: "espera",
+    assignedNames: [],
+    reason: isLinkedEntry
+      ? `Trabajo vinculado iniciado: ${firstTemplate.label} → ${secondTemplate.label}`
+      : `Entrada creada desde plantilla: ${firstTemplate.label}`,
+    createdAtMs,
+    startedAtMs: null,
+    template: isBuiltInTemplateKey(firstTemplate.key)
+      ? firstTemplate.key
+      : null,
+    quickEntryLabel: firstTemplate.label,
+    quickEntryMode: firstTemplate.mode,
 
-  firstLabel: firstTemplate.label,
-  secondLabel: secondTemplate.label,
+    linkedGroupId,
+    linkedOrder: isLinkedEntry ? 1 : null,
+    dependsOnJobId: null,
+    blockedReason: null,
+  };
 
-  firstTemplate: isBuiltInTemplateKey(firstTemplate.key)
-    ? firstTemplate.key
-    : null,
-  secondTemplate: isBuiltInTemplateKey(secondTemplate.key)
-    ? secondTemplate.key
-    : null,
+  const result = allocateJob(firstJob, techs, [firstJob, ...jobs], true, true);
 
-  firstMode: firstTemplate.mode,
-  secondMode: secondTemplate.mode,
-});
+  let finalJobs: Job[] = result.jobs;
+  let jobsToSave: Job[] = [
+    result.jobs.find((job) => job.id === firstJob.id) ?? firstJob,
+  ];
 
-const linkedFirstJob: Job = {
-  ...firstJobBase,
-  status: firstJobBase.status as JobStatus,
-  dependsOnJobId: null,
-  blockedReason: null,
-  linkedOrder: 1,
-};
+  if (isLinkedEntry && secondTemplate) {
+    const secondJob: Job = {
+      id: nextJobId + 1,
+      area: secondTemplate.area,
+      plate,
+      urgent: quickDraft.urgent,
+      status: "parado",
+      assignedNames: [],
+      reason: `Pendiente del trabajo anterior: ${firstTemplate.label}. Trabajo vinculado: ${firstTemplate.label} → ${secondTemplate.label}`,
+      createdAtMs: createdAtMs + 1,
+      startedAtMs: null,
+      pausedAtMs: nowMs(),
+      workedAccumulatedMinutes: 0,
+      pausedAccumulatedMinutes: 0,
+      template: isBuiltInTemplateKey(secondTemplate.key)
+        ? secondTemplate.key
+        : null,
+      quickEntryLabel: secondTemplate.label,
+      quickEntryMode: secondTemplate.mode,
 
-const linkedSecondJob: Job = {
-  ...secondJobBase,
-  status: "parado" as JobStatus,
-  assignedNames: [],
-  startedAtMs: null,
-  pausedAtMs: nowMs(),
-  workedAccumulatedMinutes: 0,
-  pausedAccumulatedMinutes: 0,
-  dependsOnJobId: linkedFirstJob.id,
-  blockedReason: `Pendiente de finalizar ${firstTemplate.label}.`,
-  linkedOrder: 2,
-};
+      linkedGroupId,
+      linkedOrder: 2,
+      dependsOnJobId: firstJob.id,
+      blockedReason: `Pendiente de finalizar ${firstTemplate.label}.`,
+    };
 
-  const firstJob = linkedFirstJob as Job;
-  const secondJob = linkedSecondJob as Job;
+    finalJobs = [secondJob, ...result.jobs];
+    jobsToSave = [...jobsToSave, secondJob];
+  }
 
-  const result = allocateJob(
-    firstJob,
-    techs,
-    [firstJob, secondJob, ...jobs],
-    true,
-    true
-  );
-
-  const finalJobs = result.jobs;
-
-  setJobs(finalJobs);
   setTechs(result.techs);
-  setNextJobId((value) => value + 2);
+  setJobs(finalJobs);
+  setNextJobId((value) => value + jobsToSave.length);
+
+  setQuickDraft((prev) => ({
+    ...prev,
+    linkedTemplateKey: "",
+    plate: "",
+    urgent: false,
+  }));
+
+  setQuickEntryOpen(false);
 
   appendLog(
-    `Trabajo vinculado creado para ${plate}: ${firstTemplate.label} → ${secondTemplate.label}.`
+    isLinkedEntry && secondTemplate
+      ? `Nueva entrada vinculada creada: ${plate} · ${firstTemplate.label} → ${secondTemplate.label}.`
+      : `Nueva entrada creada: ${firstTemplate.label} (${plate}).`
   );
 
   try {
-    for (const job of finalJobs) {
-      if (job.id === firstJob.id || job.id === secondJob.id) {
-        await saveJobToBackend(job);
-      }
+    for (const job of jobsToSave) {
+      await saveJobToBackend(job);
     }
 
     for (const tech of result.techs) {
       saveTechToBackend(tech);
     }
 
-    recalcWaitingQueue(result.techs, finalJobs);
-  } catch (error) {
-    console.error("Error creando trabajo vinculado:", error);
-    appendLog(`Error creando trabajo vinculado para ${plate}.`);
-  }
-}
-
-async function createTemplateEntry() {
-  const template = quickTemplates.find((item) => item.key === quickDraft.templateKey);
-  if (!template || !quickDraft.plate.trim()) return;
-
-  const baseJob: Job = {
-    id: nextJobId,
-    area: template.area,
-    plate: quickDraft.plate.trim().toUpperCase(),
-    urgent: quickDraft.urgent,
-    status: "espera",
-    assignedNames: [],
-    reason: `Entrada creada desde plantilla: ${template.label}`,
-    createdAtMs: nowMs(),
-    startedAtMs: null,
-    template: isBuiltInTemplateKey(template.key) ? template.key : null,
-    quickEntryLabel: template.label,
-    quickEntryMode: template.mode,
-  };
-
-  const result = allocateJob(baseJob, techs, [baseJob, ...jobs], true, true);
-  const supported = assignAsSupportIfPossible(
-  result.techs,
-  result.jobs,
-  quickTemplates,
-  techStats,
-  techLoadStats
-);
-
-  const finalJob = supported.jobs.find((j) => j.id === baseJob.id) ?? baseJob;
-
-  // Actualización optimista: la UI responde al instante
-  setTechs(supported.techs);
-  setJobs(supported.jobs);
-  setNextJobId((v) => v + 1);
-  setQuickDraft((p) => ({ ...p, plate: "", urgent: false }));
-  setQuickEntryOpen(false);
-  appendLog(`Nueva entrada creada: ${template.label} (${finalJob.plate}).`);
-
-  try {
-    await fetchWithTimeout(`${API_BASE}/api/jobs`, {
-  method: "POST",
-  headers: getAdminHeaders({
-    "Content-Type": "application/json",
-  }),
-  body: JSON.stringify(finalJob),
-});
-
-    for (const tech of supported.techs) {
-      saveTechToBackend(tech);
-    }
-
     await reloadJobsFromBackend();
-    recalcWaitingQueue(supported.techs, supported.jobs);
   } catch (error) {
     console.error("Error guardando entrada rápida:", error);
+    appendLog(`Error guardando entrada rápida ${plate}.`);
   }
 }
 async function addQuickTemplate() {
@@ -3391,10 +3480,10 @@ async function removeQuickTemplate(key: string) {
     setQuickTemplates((prev) => prev.filter((t) => t.key !== key));
 
     setQuickDraft((prev) =>
-      prev.templateKey === key
-        ? { templateKey: "", plate: "", urgent: false }
-        : prev
-    );
+  prev.templateKey === key
+    ? { templateKey: "", linkedTemplateKey: "", plate: "", urgent: false }
+    : prev
+);
 
     appendLog("Entrada rápida eliminada.");
   } catch (error) {
@@ -3646,9 +3735,34 @@ async function finishJob(jobId: number) {
       : tech
   );
 
-  const linkedJobToReactivate = jobsAfterClose.find(
-    (job) => job.status === "parado" && job.dependsOnJobId === jobId
-  );
+  const linkedJobToReactivate = jobsAfterClose.find((job) => {
+    if (job.status !== "parado") return false;
+    if (job.id === jobId) return false;
+
+    if (job.dependsOnJobId === jobId) return true;
+
+    if (
+      target.linkedGroupId &&
+      job.linkedGroupId === target.linkedGroupId &&
+      job.linkedOrder === 2
+    ) {
+      return true;
+    }
+
+    if (
+      job.plate === target.plate &&
+      (
+        (job.reason || "").includes("Pendiente del trabajo anterior") ||
+        (job.reason || "").includes("Trabajo vinculado") ||
+        !!job.blockedReason ||
+        job.linkedOrder === 2
+      )
+    ) {
+      return true;
+    }
+
+    return false;
+  });
 
   let finalJobs: Job[] = jobsAfterClose;
   let finalTechs: Tech[] = freedTechs;
@@ -3663,7 +3777,7 @@ async function finishJob(jobId: number) {
       pausedAtMs: null,
       dependsOnJobId: null,
       blockedReason: null,
-      reason: `Trabajo combinado desbloqueado tras finalizar ${getOperationLabel(
+      reason: `Trabajo vinculado desbloqueado tras finalizar ${getOperationLabel(
         target
       )}.`,
     };
@@ -3699,7 +3813,7 @@ async function finishJob(jobId: number) {
 
   if (reactivatedLinkedJob) {
     appendLog(
-      `Trabajo combinado desbloqueado: ${
+      `Trabajo vinculado desbloqueado y reasignado: ${
         reactivatedLinkedJob.plate
       } · ${getOperationLabel(reactivatedLinkedJob)}.`
     );
@@ -3756,40 +3870,21 @@ async function updateQuickTemplate(updatedTemplate: QuickTemplate) {
 }
 
 async function setTechManual(name: string, nextStatus: TechStatus) {
-  const updated: Tech[] = techs.map((t) =>
-    t.name !== name
-      ? t
-      : {
-          ...t,
-          status: nextStatus as TechStatus,
-          blocked: nextStatus === "nodisponible",
-          currentJobId: ["disponible", "nodisponible", "supervisor"].includes(nextStatus)
-            ? null
-            : t.currentJobId,
-        }
-  );
+  const changedAtMs = nowMs();
+
+  const updated: Tech[] = techs.map((tech) => {
+    if (tech.name !== name) return tech;
+
+    return updateTechStatusTotals(tech, nextStatus, changedAtMs);
+  });
 
   setTechs(updated);
-  appendLog(`Ramón marca a ${name} como ${nextStatus}.`);
+  appendLog(`${name} cambia a estado: ${getTechStatusLabel(nextStatus)}.`);
 
-  const changed = updated.find((t) => t.name === name);
+  const changed = updated.find((tech) => tech.name === name);
+
   if (changed) {
-    fetchWithTimeout(`${API_BASE}/api/techs/${encodeURIComponent(name)}`, {
-  method: "PUT",
-  headers: getAdminHeaders({
-    "Content-Type": "application/json",
-  }),
-  body: JSON.stringify({
-        status: changed.status,
-        blocked: changed.blocked,
-        currentJobId: changed.currentJobId,
-        competencies: changed.competencies,
-        priorities: changed.priorities,
-        avatar: changed.avatar ?? null,
-      }),
-    }).catch((error) => {
-      console.error("Error guardando técnico:", error);
-    });
+    saveTechToBackend(changed);
   }
 
   if (nextStatus === "disponible" || nextStatus === "supervisor") {
@@ -4693,50 +4788,7 @@ setIsAuthenticated(false);
       Agrupadas por tipo de trabajo
     </div>
   </div>
-{linkedTemplates.length > 0 && (
-  <div className="mt-5 rounded-2xl border border-violet-200 bg-violet-50 p-3">
-    <div className="mb-2 flex items-center justify-between gap-3">
-      <div className="text-sm font-semibold text-violet-900">
-        Trabajos vinculados
-      </div>
 
-      <span className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] uppercase text-violet-600">
-        {linkedTemplates.length} vinculadas
-      </span>
-    </div>
-
-    <div className="flex flex-wrap gap-2">
-      {linkedTemplates.map((template) => (
-        <div
-          key={template.id}
-          className="flex items-center gap-2 rounded-2xl border border-violet-200 bg-white px-3 py-2 text-slate-800 shadow-sm"
-        >
-          <button
-            type="button"
-            onClick={() => createLinkedJobFromTemplate(template)}
-            className="text-sm font-medium text-violet-900 hover:underline"
-          >
-            + {template.label}
-          </button>
-
-          <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] uppercase text-violet-600">
-            vinculado
-          </span>
-
-          {view === "ajustes" && (
-            <button
-              type="button"
-              onClick={() => removeLinkedTemplate(template.id)}
-              className="text-xs text-red-600 hover:text-red-700"
-            >
-              Eliminar
-            </button>
-          )}
-        </div>
-      ))}
-    </div>
-  </div>
-)}
   {view === "ajustes" && (
   <div className="mb-5 rounded-2xl border border-violet-200 bg-violet-50 p-4">
     <div className="mb-3">
@@ -4850,13 +4902,23 @@ setIsAuthenticated(false);
 
   <div className="space-y-4">
     {Object.entries(AREA_META).map(([areaKey, areaMeta]) => {
-      const templatesForArea = quickTemplates.filter(
-        (template) => template.area === (areaKey as AreaKey)
-      );
+  const currentArea = areaKey as AreaKey;
 
-      const Icon = areaMeta.icon;
+  const templatesForArea = quickTemplates.filter(
+    (template) => template.area === currentArea
+  );
 
-      return (
+  const linkedTemplatesForArea = linkedTemplates.filter((linked) => {
+    const firstTemplate = quickTemplates.find(
+      (template) => template.key === linked.firstTemplateKey
+    );
+
+    return firstTemplate?.area === currentArea;
+  });
+
+  const Icon = areaMeta.icon;
+
+  return (
         <div
           key={`quick-area-${areaKey}`}
           className={`rounded-2xl border p-3 ${areaMeta.color}`}
@@ -4872,23 +4934,54 @@ setIsAuthenticated(false);
             </span>
           </div>
 
-          {templatesForArea.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-white/70 bg-white/50 px-3 py-2 text-xs opacity-70">
-              Sin entradas rápidas para {areaMeta.label}.
-            </div>
-          ) : (
-            <div className="flex flex-wrap gap-2">
-              {templatesForArea.map((template) => (
+          {templatesForArea.length === 0 && linkedTemplatesForArea.length === 0 ? (
+  <div className="rounded-xl border border-dashed border-white/70 bg-white/50 px-3 py-2 text-xs opacity-70">
+    Sin entradas rápidas para {areaMeta.label}.
+  </div>
+) : (
+  <div className="flex flex-wrap gap-2">
+    {linkedTemplatesForArea.map((linked) => (
+      <button
+        key={linked.id}
+        type="button"
+        onClick={() => {
+          const firstTemplate = quickTemplates.find(
+            (template) => template.key === linked.firstTemplateKey
+          );
+
+          if (!firstTemplate) return;
+
+          setQuickDraft({
+            templateKey: linked.firstTemplateKey,
+            linkedTemplateKey: linked.secondTemplateKey,
+            plate: "",
+            urgent: false,
+          });
+
+          setQuickEntryOpen(true);
+        }}
+        className="flex items-center gap-2 rounded-2xl border border-violet-200 bg-violet-50 px-3 py-2 text-sm font-medium text-violet-800 shadow-sm hover:bg-violet-100"
+      >
+        + {linked.label}
+
+        <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] uppercase text-violet-700">
+          Vinculado
+        </span>
+      </button>
+    ))}
+
+    {templatesForArea.map((template) => (
                 <React.Fragment key={template.key}>
                   <div className="flex items-center gap-2 rounded-2xl border border-white/70 bg-white/90 px-3 py-2 text-slate-800 shadow-sm">
                     <button
                       type="button"
                       onClick={() => {
                         setQuickDraft({
-                          templateKey: template.key,
-                          plate: "",
-                          urgent: false,
-                        });
+  templateKey: "",
+  linkedTemplateKey: "",
+  plate: "",
+  urgent: false,
+});
                         setQuickEntryOpen(true);
                       }}
                       className="text-sm font-medium hover:underline"
@@ -5231,24 +5324,8 @@ setIsAuthenticated(false);
                   const currentJob = jobs.find(
                     (job) => job.id === tech.currentJobId
                   );
-                  const isAvailable =
-                    tech.status === "disponible" || tech.status === "supervisor";
-                  const isOccupied = tech.status === "ocupado";
-                  const isSupport = tech.status === "refuerzo";
-                  const rowColor = isAvailable
-                    ? "bg-green-50 border-green-200"
-                    : isOccupied
-                    ? "bg-red-50 border-red-200"
-                    : isSupport
-                    ? "bg-amber-50 border-amber-200"
-                    : "bg-slate-50 border-slate-200";
-                  const textColor = isAvailable
-                    ? "text-green-700"
-                    : isOccupied
-                    ? "text-red-700"
-                    : isSupport
-                    ? "text-amber-700"
-                    : "text-slate-700";
+                  const rowColor = getTechStatusColor(tech.status);
+                  const textColor = "";
 
                   return (
                     <tr key={tech.name} className={`border-t ${rowColor}`}>
@@ -5273,17 +5350,30 @@ setIsAuthenticated(false);
                           <option value="disponible">disponible</option>
                           <option value="refuerzo">refuerzo</option>
                           <option value="ocupado">ocupado</option>
-                          <option value="nodisponible">nodisponible</option>
-                          {tech.name === "Ramón" && (
-                            <option value="supervisor">supervisor</option>
-                          )}
+                          <option value="nodisponible">no disponible</option>
+<option value="vacaciones">vacaciones</option>
+<option value="baja">baja</option>
+<option value="permiso">permiso</option>
+<option value="otro_taller">en otro taller</option>
+{tech.name === "Ramón" && (
+  <option value="supervisor">supervisor</option>
+)}
                         </select>
                       </td>
                       <td className={`py-2 text-xs ${textColor}`}>
-                        {currentJob
-                          ? `${AREA_META[currentJob.area].label} · ${currentJob.plate}`
-                          : "-"}
-                      </td>
+  <div>
+    {currentJob
+      ? `${AREA_META[currentJob.area].label} · ${currentJob.plate}`
+      : "-"}
+  </div>
+
+  {isUnavailableTechStatus(tech.status) && (
+    <div className="mt-1 text-[10px] font-medium text-slate-500">
+      {getTechStatusLabel(tech.status)}:{" "}
+      {formatMinutes(getTechMinutesInStatus(tech, tech.status))}
+    </div>
+  )}
+</td>
                       <td className="py-2">
   <div className="flex items-center gap-3">
     <label className="cursor-pointer text-xs text-blue-600 hover:text-blue-700">
