@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
 import AgendaView from "./components/AgendaView";
 import type { ScheduledJob } from "./components/AgendaView";
+import { useAutoSync } from "./modules/useAutoSync";
+import OperariosTVView from "./components/OperariosTVView";
 import {
   AlertTriangle,
   Car,
@@ -1701,8 +1703,9 @@ export default function SeaTarragonaV1() {
 const [loginPassword, setLoginPassword] = useState("");
 const [loginError, setLoginError] = useState("");
 const [loginLoading, setLoginLoading] = useState(false);
+const [lastSyncAt, setLastSyncAt] = useState<number | null>(null);
 const [userRole, setUserRole] = useState<"admin" | "supervisor" | null>(() => {
-  const stored = localStorage.getItem("sea-role");
+const stored = localStorage.getItem("sea-role");
 
   if (stored === "admin" || stored === "supervisor") {
     return stored;
@@ -1809,6 +1812,7 @@ const [quickDraft, setQuickDraft] = useState<{
   plate: "",
   urgent: false,
 });
+const [quickSelectedArea, setQuickSelectedArea] = useState<AreaKey>("camion");
 
 const [newQuickTemplate, setNewQuickTemplate] = useState<{
   label: string;
@@ -1834,9 +1838,8 @@ const [externalAILoading, setExternalAILoading] = useState(false);
 const [newTechName, setNewTechName] = useState("");
 const [, setTick] = useState(0);
 const [view, setView] = useState<
-  "operativo" | "agenda" | "ajustes" | "pantalla" | "informes"
+  "operativo" | "agenda" | "ajustes" | "pantalla" | "informes" | "operarios"
 >("operativo");
-
   useEffect(() => {
     async function loadRules() {
       try {
@@ -2268,6 +2271,27 @@ const techLoadStats = useMemo<TechLoadStat[]>(() => {
 useEffect(() => {
   console.log("SELF TESTS:", runSelfTests(techStats, techLoadStats));
 }, [techStats, techLoadStats]);
+const autoSyncPaused =
+  formOpen ||
+  quickEntryOpen ||
+  resetConfirmOpen ||
+  editingQuickTemplateKey !== null;
+
+useAutoSync({
+  enabled: isAuthenticated,
+  paused: autoSyncPaused,
+  intervalMs: 5000,
+  onSync: async () => {
+    await reloadJobsFromBackend();
+    await reloadQuickTemplatesFromBackend();
+    await reloadScheduledJobsFromBackend();
+    await reloadLogsFromBackend();
+    await reloadTechsFromBackend();
+  },
+  onSynced: () => {
+    setLastSyncAt(Date.now());
+  },
+});
 useEffect(() => {
   if (!scheduledJobsLoaded) return;
 
@@ -2796,7 +2820,73 @@ async function reloadJobsFromBackend() {
     console.error("Error recargando trabajos:", error);
   }
 }
+async function reloadTechsFromBackend(currentJobs = jobs) {
+  try {
+    const response = await fetchWithTimeout(`${API_BASE}/api/techs`);
+    const data = await response.json();
 
+    if (!Array.isArray(data)) return;
+
+    setTechs(() => {
+      const merged = INITIAL_TECHS.map((baseTech) => {
+        const found = data.find((tech: any) => tech.name === baseTech.name);
+
+        const hasCompetencies =
+          found?.competencies &&
+          Object.keys(found.competencies).length > 0;
+
+        const hasPriorities =
+          found?.priorities &&
+          Object.keys(found.priorities).length > 0;
+
+        return found
+          ? {
+              ...baseTech,
+              status: found.status as TechStatus,
+              blocked: !!found.blocked,
+              currentJobId: found.currentJobId ?? null,
+              competencies: hasCompetencies
+                ? found.competencies
+                : baseTech.competencies,
+              priorities: hasPriorities
+                ? found.priorities
+                : baseTech.priorities,
+              avatar: found.avatar ?? baseTech.avatar ?? null,
+              statusChangedAtMs:
+                found.statusChangedAtMs ?? baseTech.statusChangedAtMs ?? null,
+              statusTotals: found.statusTotals ?? baseTech.statusTotals ?? {},
+            }
+          : baseTech;
+      });
+
+      return syncTechsWithActiveJobs(merged, currentJobs);
+    });
+  } catch (error) {
+    console.error("Error recargando técnicos:", error);
+  }
+}
+
+async function reloadScheduledJobsFromBackend() {
+  try {
+    const response = await fetchWithTimeout(`${API_BASE}/api/scheduled-jobs`);
+    const data = await response.json();
+
+    setScheduledJobs(Array.isArray(data) ? data : []);
+  } catch (error) {
+    console.error("Error recargando agenda:", error);
+  }
+}
+
+async function reloadLogsFromBackend() {
+  try {
+    const response = await fetchWithTimeout(`${API_BASE}/api/logs`);
+    const data = await response.json();
+
+    setLog(Array.isArray(data) ? data : []);
+  } catch (error) {
+    console.error("Error recargando logs:", error);
+  }
+}
 async function saveJobToBackend(job: Job) {
   try {
     const response = await fetchWithTimeout(`${API_BASE}/api/jobs`, {
@@ -4253,6 +4343,18 @@ if (view === "pantalla") {
     />
   );
 }
+if (view === "operarios") {
+  return (
+    <OperariosTVView
+      jobs={jobs}
+      techs={techs}
+      finishJob={finishJob}
+      moveJobToStandBy={pauseJob}
+      getOperationLabel={getOperationLabel}
+      onBack={() => setView("operativo")}
+    />
+  );
+}
 if (view === "agenda") {
   return (
     <AgendaView
@@ -4319,9 +4421,24 @@ return (
           <UserCog className="h-8 w-8" />
           <div>
             <h1 className="text-2xl font-semibold">SEA Tarragona · Panel V1</h1>
-            <p className="text-sm text-slate-600">
-              Pantalla dividida en Operativo y Ajustes
-            </p>
+           <p className="text-sm text-slate-600">
+  Pantalla dividida en Operativo y Ajustes
+</p>
+
+<div className="mt-1 text-xs text-slate-400">
+  Sincronización automática cada 5 s
+  {lastSyncAt && (
+    <>
+      {" "}
+      · Última:{" "}
+      {new Date(lastSyncAt).toLocaleTimeString("es-ES", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      })}
+    </>
+  )}
+</div>
           </div>
         </div>
 
@@ -4355,6 +4472,12 @@ setIsAuthenticated(false);
   className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700"
 >
   Agenda
+</button>
+<button
+  onClick={() => setView("operarios")}
+  className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700"
+>
+  Pantalla Técnicos
 </button>
           <button
             onClick={() => setView("ajustes")}
@@ -4785,8 +4908,8 @@ setIsAuthenticated(false);
     </div>
 
     <div className="text-xs text-slate-400">
-      Agrupadas por tipo de trabajo
-    </div>
+  Selecciona pictograma y trabajo
+</div>
   </div>
 
   {view === "ajustes" && (
@@ -4900,156 +5023,245 @@ setIsAuthenticated(false);
   </div>
 )}
 
-  <div className="space-y-4">
-    {Object.entries(AREA_META).map(([areaKey, areaMeta]) => {
-  const currentArea = areaKey as AreaKey;
+<div className="space-y-4">
+  <div className="grid grid-cols-5 gap-2">
+    {(["camion", "movil", "tacografo", "turismo", "mecanica"] as AreaKey[]).map(
+      (area) => {
+        const areaTemplates = quickTemplates.filter(
+          (template) => template.area === area
+        );
 
-  const templatesForArea = quickTemplates.filter(
-    (template) => template.area === currentArea
-  );
-
-  const linkedTemplatesForArea = linkedTemplates.filter((linked) => {
-    const firstTemplate = quickTemplates.find(
-      (template) => template.key === linked.firstTemplateKey
-    );
-
-    return firstTemplate?.area === currentArea;
-  });
-
-  const Icon = areaMeta.icon;
-
-  return (
-        <div
-          key={`quick-area-${areaKey}`}
-          className={`rounded-2xl border p-3 ${areaMeta.color}`}
-        >
-          <div className="mb-2 flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2 text-sm font-semibold">
-              <Icon className="h-4 w-4" />
-              {areaMeta.label}
-            </div>
-
-            <span className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] uppercase opacity-80">
-              {templatesForArea.length} entradas
-            </span>
-          </div>
-
-          {templatesForArea.length === 0 && linkedTemplatesForArea.length === 0 ? (
-  <div className="rounded-xl border border-dashed border-white/70 bg-white/50 px-3 py-2 text-xs opacity-70">
-    Sin entradas rápidas para {areaMeta.label}.
-  </div>
-) : (
-  <div className="flex flex-wrap gap-2">
-    {linkedTemplatesForArea.map((linked) => (
-      <button
-        key={linked.id}
-        type="button"
-        onClick={() => {
+        const areaLinkedTemplates = linkedTemplates.filter((linked) => {
           const firstTemplate = quickTemplates.find(
             (template) => template.key === linked.firstTemplateKey
           );
 
-          if (!firstTemplate) return;
+          return firstTemplate?.area === area;
+        });
 
-          setQuickDraft({
-            templateKey: linked.firstTemplateKey,
-            linkedTemplateKey: linked.secondTemplateKey,
-            plate: "",
-            urgent: false,
-          });
+        if (areaTemplates.length === 0 && areaLinkedTemplates.length === 0) {
+          return null;
+        }
 
-          setQuickEntryOpen(true);
-        }}
-        className="flex items-center gap-2 rounded-2xl border border-violet-200 bg-violet-50 px-3 py-2 text-sm font-medium text-violet-800 shadow-sm hover:bg-violet-100"
-      >
-        + {linked.label}
+        const meta = AREA_META[area];
+        const Icon = meta.icon;
+        const active = quickSelectedArea === area;
 
-        <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] uppercase text-violet-700">
-          Vinculado
-        </span>
-      </button>
-    ))}
+        return (
+          <button
+            key={`quick-icon-${area}`}
+            type="button"
+            onClick={() => {
+              setQuickSelectedArea(area);
 
-    {templatesForArea.map((template) => (
-                <React.Fragment key={template.key}>
-                  <div className="flex items-center gap-2 rounded-2xl border border-white/70 bg-white/90 px-3 py-2 text-slate-800 shadow-sm">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setQuickDraft({
-  templateKey: "",
-  linkedTemplateKey: "",
-  plate: "",
-  urgent: false,
-});
-                        setQuickEntryOpen(true);
-                      }}
-                      className="text-sm font-medium hover:underline"
+              const firstLinked = [...areaLinkedTemplates].sort((a, b) =>
+                a.label.localeCompare(b.label, "es", {
+                  sensitivity: "base",
+                })
+              )[0];
+
+              const firstTemplate = [...areaTemplates].sort((a, b) =>
+                a.label.localeCompare(b.label, "es", {
+                  sensitivity: "base",
+                })
+              )[0];
+
+              if (firstLinked) {
+                setQuickDraft((prev) => ({
+                  ...prev,
+                  templateKey: firstLinked.firstTemplateKey,
+                  linkedTemplateKey: firstLinked.secondTemplateKey,
+                }));
+
+                return;
+              }
+
+              setQuickDraft((prev) => ({
+                ...prev,
+                templateKey: firstTemplate?.key ?? "",
+                linkedTemplateKey: "",
+              }));
+            }}
+            className={`rounded-2xl border px-3 py-3 text-xs font-semibold transition ${meta.color} ${
+              active
+                ? "ring-2 ring-slate-900 ring-offset-2"
+                : "opacity-80 hover:opacity-100"
+            }`}
+            title={meta.label}
+          >
+            <Icon className="mx-auto mb-1 h-6 w-6" />
+            <span className="block truncate text-[11px] font-bold">
+              {meta.label}
+            </span>
+          </button>
+        );
+      }
+    )}
+  </div>
+
+  {(() => {
+    const areaMeta = AREA_META[quickSelectedArea];
+    const Icon = areaMeta.icon;
+
+    const templatesForArea = quickTemplates
+      .filter((template) => template.area === quickSelectedArea)
+      .slice()
+      .sort((a, b) =>
+        a.label.localeCompare(b.label, "es", {
+          sensitivity: "base",
+        })
+      );
+
+    const linkedTemplatesForArea = linkedTemplates
+      .filter((linked) => {
+        const firstTemplate = quickTemplates.find(
+          (template) => template.key === linked.firstTemplateKey
+        );
+
+        return firstTemplate?.area === quickSelectedArea;
+      })
+      .slice()
+      .sort((a, b) =>
+        a.label.localeCompare(b.label, "es", {
+          sensitivity: "base",
+        })
+      );
+
+    const totalEntries = templatesForArea.length + linkedTemplatesForArea.length;
+
+    const selectedValue = quickDraft.linkedTemplateKey
+      ? `${quickDraft.templateKey}|||${quickDraft.linkedTemplateKey}`
+      : quickDraft.templateKey;
+
+    return (
+      <div className={`rounded-2xl border p-3 ${areaMeta.color}`}>
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-sm font-semibold">
+            <Icon className="h-4 w-4" />
+            {areaMeta.label}
+          </div>
+
+          <span className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] uppercase opacity-80">
+            {totalEntries} entradas
+          </span>
+        </div>
+
+        {totalEntries === 0 ? (
+          <div className="rounded-xl border border-dashed border-white/70 bg-white/50 px-3 py-2 text-xs opacity-70">
+            Sin entradas rápidas para {areaMeta.label}.
+          </div>
+        ) : (
+          <div className="grid gap-3 md:grid-cols-[1fr_auto]">
+            <select
+              value={selectedValue}
+              onChange={(e) => {
+                const [templateKey, linkedTemplateKey] =
+                  e.target.value.split("|||");
+
+                setQuickDraft((prev) => ({
+                  ...prev,
+                  templateKey,
+                  linkedTemplateKey: linkedTemplateKey || "",
+                }));
+              }}
+              className="w-full rounded-2xl border border-white/70 bg-white px-4 py-3 text-sm font-semibold text-slate-800 shadow-sm"
+            >
+              {linkedTemplatesForArea.length > 0 && (
+                <optgroup label="Trabajos vinculados">
+                  {linkedTemplatesForArea.map((linked) => (
+                    <option
+                      key={linked.id}
+                      value={`${linked.firstTemplateKey}|||${linked.secondTemplateKey}`}
                     >
-                      + {template.label}
-                    </button>
+                      {linked.label}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
 
-                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] uppercase text-slate-500">
-                      {template.mode === "single"
-                        ? "1 técnico"
-                        : "técnico + refuerzo"}
-                    </span>
+              {templatesForArea.length > 0 && (
+                <optgroup label="Entradas rápidas">
+                  {templatesForArea.map((template) => (
+                    <option key={template.key} value={template.key}>
+                      {template.label}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+            </select>
 
-                    {template.standardMinutes != null && (
-  <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-700">
-    {template.standardMinutes} min estándar
-  </span>
+            <button
+              type="button"
+              onClick={() => {
+                if (!quickDraft.templateKey) return;
+                setQuickEntryOpen(true);
+              }}
+              disabled={!quickDraft.templateKey}
+              className="rounded-2xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white disabled:opacity-40"
+            >
+              Crear entrada
+            </button>
+          </div>
+        )}
+{view === "ajustes" && templatesForArea.length > 0 && (
+  <div className="mt-3 flex flex-wrap gap-2">
+    {templatesForArea.map((template) => (
+      <div
+        key={`quick-admin-actions-${template.key}`}
+        className="flex items-center gap-2 rounded-xl border border-white/70 bg-white/80 px-3 py-2 text-xs text-slate-700"
+      >
+        <span className="font-medium">{template.label}</span>
+
+        <button
+          type="button"
+          onClick={() =>
+            setEditingQuickTemplateKey(
+              editingQuickTemplateKey === template.key
+                ? null
+                : template.key
+            )
+          }
+          className="font-medium text-blue-600 hover:text-blue-700"
+        >
+          Editar
+        </button>
+
+        <button
+          type="button"
+          onClick={() => removeQuickTemplate(template.key)}
+          className="font-medium text-red-600 hover:text-red-700"
+        >
+          Eliminar
+        </button>
+      </div>
+    ))}
+  </div>
 )}
 
-                    {view === "ajustes" && (
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setEditingQuickTemplateKey(
-                              editingQuickTemplateKey === template.key
-                                ? null
-                                : template.key
-                            )
-                          }
-                          className="text-xs text-blue-600 hover:text-blue-700"
-                        >
-                          Editar
-                        </button>
 
-                        <button
-                          type="button"
-                          onClick={() => removeQuickTemplate(template.key)}
-                          className="text-xs text-red-600 hover:text-red-700"
-                        >
-                          Eliminar
-                        </button>
-                      </div>
-                    )}
-                  </div>
+                {view === "ajustes" &&
+          templatesForArea
+            .filter((template) => editingQuickTemplateKey === template.key)
+            .map((template) => (
+              <div
+                key={`editor-${template.key}`}
+                className="mt-3 w-full rounded-2xl border border-slate-200 bg-white p-4 text-slate-900"
+              >
+                <div className="mb-3 text-sm font-medium text-slate-700">
+                  Editar entrada rápida
+                </div>
 
-                  {view === "ajustes" &&
-                    editingQuickTemplateKey === template.key && (
-                      <div className="mt-3 w-full rounded-2xl border border-slate-200 bg-white p-4 text-slate-900">
-                        <div className="mb-3 text-sm font-medium text-slate-700">
-                          Editar entrada rápida
-                        </div>
-
-                        <QuickTemplateEditor
-                          template={template}
-                          techs={techs}
-                          onSave={updateQuickTemplate}
-                        />
-                      </div>
-                    )}
-                </React.Fragment>
-              ))}
-            </div>
-          )}
-        </div>
-      );
-    })}
-  </div>
+                <QuickTemplateEditor
+                  template={template}
+                  techs={techs}
+                  onSave={updateQuickTemplate}
+                />
+              </div>
+            ))}
+      </div>
+    );
+  })()}
+</div>
 
   {view === "ajustes" && isSupervisor && (
     <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
@@ -6073,21 +6285,54 @@ setIsAuthenticated(false);
               <div>
                 <label className="mb-2 block text-sm font-medium">Tipo</label>
                 <select
-                  value={quickDraft.templateKey}
-                  onChange={(event) =>
-                    setQuickDraft((prev) => ({
-                      ...prev,
-                      templateKey: event.target.value,
-                    }))
-                  }
-                  className="w-full rounded-2xl border border-slate-200 px-3 py-3"
-                >
-                  {quickTemplates.map((template) => (
-                    <option key={template.key} value={template.key}>
-                      {template.label}
-                    </option>
-                  ))}
-                </select>
+  value={
+    quickDraft.linkedTemplateKey
+      ? `${quickDraft.templateKey}|||${quickDraft.linkedTemplateKey}`
+      : quickDraft.templateKey
+  }
+  onChange={(event) => {
+    const [templateKey, linkedTemplateKey] =
+      event.target.value.split("|||");
+
+    setQuickDraft((prev) => ({
+      ...prev,
+      templateKey,
+      linkedTemplateKey: linkedTemplateKey || "",
+    }));
+  }}
+  className="w-full rounded-2xl border border-slate-200 px-3 py-3"
+>
+  {linkedTemplates
+    .filter((linked) => {
+      const firstTemplate = quickTemplates.find(
+        (template) => template.key === linked.firstTemplateKey
+      );
+
+      return firstTemplate?.area === quickSelectedArea;
+    })
+    .sort((a, b) =>
+      a.label.localeCompare(b.label, "es", { sensitivity: "base" })
+    )
+    .map((linked) => (
+      <option
+        key={linked.id}
+        value={`${linked.firstTemplateKey}|||${linked.secondTemplateKey}`}
+      >
+        {linked.label}
+      </option>
+    ))}
+
+  {quickTemplates
+    .filter((template) => template.area === quickSelectedArea)
+    .sort((a, b) =>
+      a.label.localeCompare(b.label, "es", { sensitivity: "base" })
+    )
+    .map((template) => (
+      <option key={template.key} value={template.key}>
+        {template.label}
+      </option>
+    ))}
+</select>
                 {(() => {
   const selectedTemplate = quickTemplates.find(
     (template) => template.key === quickDraft.templateKey
