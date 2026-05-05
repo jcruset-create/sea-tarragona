@@ -9,6 +9,7 @@ import { fileURLToPath } from "url";
 import db, { initDb } from "./db.ts";
 import { supabase, SUPABASE_STORAGE_BUCKET } from "./supabase.ts";
 import OpenAI from "openai";
+import { findUserByPassword } from "./modules/users";
 
 
 const app = express();
@@ -903,22 +904,9 @@ app.post("/api/login", (req, res) => {
   try {
     const { password } = req.body ?? {};
 
-    const roles = [
-      {
-        role: "admin",
-        password: process.env.ADMIN_PASSWORD,
-      },
-      {
-        role: "supervisor",
-        password: process.env.SUPERVISOR_PASSWORD,
-      },
-    ] as const;
+    const user = findUserByPassword(password);
 
-    const match = roles.find(
-      (item) => item.password && password === item.password
-    );
-
-    if (!match) {
+    if (!user) {
       return res.status(401).json({
         error: "Contraseña incorrecta",
       });
@@ -926,7 +914,7 @@ app.post("/api/login", (req, res) => {
 
     res.json({
       ok: true,
-      role: match.role,
+      role: user.role,
     });
   } catch (error) {
     console.error("POST /api/login error:", error);

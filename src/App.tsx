@@ -4,6 +4,17 @@ import type { ScheduledJob } from "./components/AgendaView";
 import { useAutoSync } from "./modules/useAutoSync";
 import OperariosTVView from "./components/OperariosTVView";
 import {
+  type AppView,
+  type UserRole,
+  canAccessView,
+  canUseAdminTools,
+  canUseScreens,
+  canUseSupervisorTools,
+  getDefaultViewForRole,
+  isValidUserRole,
+} from "./modules/permissions";
+
+import {
   AlertTriangle,
   Car,
   CheckCircle2,
@@ -1704,18 +1715,19 @@ const [loginPassword, setLoginPassword] = useState("");
 const [loginError, setLoginError] = useState("");
 const [loginLoading, setLoginLoading] = useState(false);
 const [lastSyncAt, setLastSyncAt] = useState<number | null>(null);
-const [userRole, setUserRole] = useState<"admin" | "supervisor" | null>(() => {
-const stored = localStorage.getItem("sea-role");
+const [userRole, setUserRole] = useState<UserRole | null>(() => {
+  const stored = localStorage.getItem("sea-role");
 
-  if (stored === "admin" || stored === "supervisor") {
+  if (isValidUserRole(stored)) {
     return stored;
   }
 
   return null;
 });
 
-const isAdmin = userRole === "admin";
-const isSupervisor = userRole === "admin" || userRole === "supervisor";
+const isAdmin = canUseAdminTools(userRole);
+const isSupervisor = canUseSupervisorTools(userRole);
+const userCanUseScreens = canUseScreens(userRole);
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
   const [resetPassword, setResetPassword] = useState("");
   const [resetError, setResetError] = useState("");
@@ -1837,9 +1849,7 @@ const [externalAIAnswer, setExternalAIAnswer] = useState("");
 const [externalAILoading, setExternalAILoading] = useState(false);
 const [newTechName, setNewTechName] = useState("");
 const [, setTick] = useState(0);
-const [view, setView] = useState<
-  "operativo" | "agenda" | "ajustes" | "pantalla" | "informes" | "operarios"
->("operativo");
+const [view, setView] = useState<AppView>("operativo");
   useEffect(() => {
     async function loadRules() {
       try {
@@ -2292,6 +2302,16 @@ useAutoSync({
     setLastSyncAt(Date.now());
   },
 });
+
+useEffect(() => {
+  if (!isAuthenticated) return;
+  if (!userRole) return;
+
+  if (!canAccessView(userRole, view)) {
+    setView(getDefaultViewForRole(userRole));
+  }
+}, [isAuthenticated, userRole, view]);
+
 useEffect(() => {
   if (!scheduledJobsLoaded) return;
 
@@ -2773,9 +2793,13 @@ localStorage.setItem("sea-authenticated", "true");
 localStorage.setItem("sea-admin-token", loginPassword);
 localStorage.setItem("sea-role", data.role);
 
-setUserRole(data.role);
+const role = isValidUserRole(data.role) ? data.role : null;
+
+setUserRole(role);
 setIsAuthenticated(true);
 setLoginPassword("");
+
+setView(getDefaultViewForRole(role));
   } catch (error) {
     console.error("Error iniciando sesión:", error);
     setLoginError("No se pudo iniciar sesión");
@@ -4333,7 +4357,7 @@ function updateTechPriority(
     return updated;
   });
 }
-if (view === "pantalla") {
+if (view === "pantalla" && canAccessView(userRole, "pantalla")) {
   return (
     <WorkshopWallScreen
       jobs={jobs}
@@ -4343,7 +4367,7 @@ if (view === "pantalla") {
     />
   );
 }
-if (view === "operarios") {
+if (view === "operarios" && canAccessView(userRole, "operarios")) {
   return (
     <OperariosTVView
       jobs={jobs}
@@ -4352,10 +4376,21 @@ if (view === "operarios") {
       moveJobToStandBy={pauseJob}
       getOperationLabel={getOperationLabel}
       onBack={() => setView("operativo")}
+      onGoWorkshopScreen={() => setView("pantalla")}
+      canGoBack={canAccessView(userRole, "operativo")}
+      onLogout={() => {
+        localStorage.removeItem("sea-authenticated");
+        localStorage.removeItem("sea-admin-token");
+        localStorage.removeItem("sea-role");
+
+        setUserRole(null);
+        setIsAuthenticated(false);
+        setView("operativo");
+      }}
     />
   );
 }
-if (view === "agenda") {
+if (view === "agenda" && canAccessView(userRole, "agenda")) {
   return (
     <AgendaView
       scheduledJobs={scheduledJobs}
@@ -4443,16 +4478,18 @@ return (
         </div>
 
         <div className="flex gap-2">
-          <button
-            onClick={() => setView("operativo")}
-            className={`rounded-2xl px-4 py-2 text-sm font-medium ${
-              view === "operativo"
-                ? "bg-slate-900 text-white"
-                : "border border-slate-200 bg-white text-slate-700"
-            }`}
-          >
-            Operativo
-          </button>
+          {canAccessView(userRole, "operativo") && (
+  <button
+    onClick={() => setView("operativo")}
+    className={`rounded-2xl px-4 py-2 text-sm font-medium ${
+      view === "operativo"
+        ? "bg-slate-900 text-white"
+        : "border border-slate-200 bg-white text-slate-700"
+    }`}
+  >
+    Operativo
+  </button>
+)}
           <button
   type="button"
   onClick={() => {
@@ -4467,34 +4504,42 @@ setIsAuthenticated(false);
 >
   Salir
 </button>
-          <button
-  onClick={() => setView("agenda")}
-  className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700"
->
-  Agenda
-</button>
-<button
-  onClick={() => setView("operarios")}
-  className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700"
->
-  Pantalla Técnicos
-</button>
-          <button
-            onClick={() => setView("ajustes")}
-            className={`rounded-2xl px-4 py-2 text-sm font-medium ${
-              view === "ajustes"
-                ? "bg-slate-900 text-white"
-                : "border border-slate-200 bg-white text-slate-700"
-            }`}
-          >
-            Ajustes
-          </button>
-          <button
-  onClick={() => setView("pantalla")}
-  className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700"
->
-  Pantalla taller
-</button>
+{canAccessView(userRole, "agenda") && (
+  <button
+    onClick={() => setView("agenda")}
+    className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700"
+  >
+    Agenda
+  </button>
+)}
+{userCanUseScreens && canAccessView(userRole, "operarios") && (
+  <button
+    onClick={() => setView("operarios")}
+    className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700"
+  >
+    Pantalla Técnicos
+  </button>
+)}
+          {canAccessView(userRole, "ajustes") && (
+  <button
+    onClick={() => setView("ajustes")}
+    className={`rounded-2xl px-4 py-2 text-sm font-medium ${
+      view === "ajustes"
+        ? "bg-slate-900 text-white"
+        : "border border-slate-200 bg-white text-slate-700"
+    }`}
+  >
+    Ajustes
+  </button>
+)}
+{userCanUseScreens && canAccessView(userRole, "pantalla") && (
+  <button
+    onClick={() => setView("pantalla")}
+    className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700"
+  >
+    Pantalla taller
+  </button>
+)}
         </div>
       </div>
 
